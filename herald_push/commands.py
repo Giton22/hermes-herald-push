@@ -148,7 +148,7 @@ def make_handler(store: Store, version: str, watching: Callable[[], bool],
         # Exceptions would be swallowed into a generic "unknown command": always answer.
         try:
             if not trusted():
-                return reply(ok=False, error="Herald push can only be managed from the Herald app or the dashboard.")
+                return reply(ok=False, error="Kyllene push can only be managed from the Kyllene app or the dashboard.")
             raw = (raw or "").strip()
             if len(raw) > (MAX_ANSWER_ARG if raw.startswith("phone answer ") else MAX_ARG):
                 return reply(ok=False, error="too long")

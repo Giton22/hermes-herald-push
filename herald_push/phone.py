@@ -471,7 +471,7 @@ class Phones:
                 if self.interrupted():
                     return _error("Stopped before the phone answered.")
                 time.sleep(POLL_SECONDS)
-            return _error("The phone didn't answer in time. Herald may be closed, offline or not connected to "
+            return _error("The phone didn't answer in time. Kyllene may be closed, offline or not connected to "
                           "this gateway, or the user didn't respond.")
         finally:
             for kind in ("req", "res"):
@@ -646,7 +646,7 @@ def register_tools(ctx, phones: Phones) -> None:
     for name, (schema, _timeout, emoji) in TOOLS.items():
         def handler(args, session_id: str = "", _name=name, **_kwargs):
             if on_messaging_platform():
-                return _error("Phone tools only work in chats from Herald, Desktop or the dashboard, not on a "
+                return _error("Phone tools only work in chats from Kyllene, Desktop or the dashboard, not on a "
                               "messaging platform.")
             if _name == CALL_TOOL:
                 trimmed = call_args(args)

@@ -1,15 +1,15 @@
 name: herald-push
-label: Herald push
-version: 0.5.1
+label: Kyllene push
+version: 0.5.2
 manifest_version: 2
 requires_hermes: ">=0.21.5"
 description: >
-  End-to-end encrypted notifications for the Herald Android app, through ntfy, so a phone hears from its
+  End-to-end encrypted notifications for the Kyllene Android app, through ntfy, so a phone hears from its
   bots even when it can't reach the gateway (off the tailnet, on mobile data). Every message is encrypted
   to the phone's key and signed by the gateway; the ntfy server only carries opaque envelopes. Phones
-  register themselves from Herald over the authenticated dashboard connection. Also the phone tools: the
+  register themselves from Kyllene over the authenticated dashboard connection. Also the phone tools: the
   agent can read the phone's battery, place or calendar, set an alarm and more, only the tools the user
-  switched on in Herald, and every change asks on the phone first. With Calls on in Herald, the agent can
+  switched on in Kyllene, and every change asks on the phone first. With Calls on in Kyllene, the agent can
   ring the user's own phone and watch for something urgent, and talk it over by voice.
 author: Giton22
 homepage: https://github.com/Giton22/hermes-herald-push
