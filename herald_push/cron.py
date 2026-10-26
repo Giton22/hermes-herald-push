@@ -18,6 +18,7 @@ import os
 import re
 import sqlite3
 import time
+from bisect import bisect_right
 from dataclasses import dataclass, replace
 from datetime import datetime, tzinfo
 from pathlib import Path
@@ -388,14 +389,16 @@ def run_sessions(home: Path, job_id: str, runs: Iterable[str], zone: Optional[tz
         conn = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True, timeout=2.0)
         try:
             sessions = _job_sessions(conn, job_id)
+            # Sessions are sorted by start, so each run's latest is found by bisection, not a scan of them all.
+            starts = [s[0] for s in sessions]
             previous: Optional[float] = None
             for run in sorted(runs):
                 at = run_time(run, zone)
-                started = [s for s in sessions if s[0] <= at + SESSION_SLACK and (previous is None or s[0] > previous)]
-                previous = at
-                if not started:
+                latest = bisect_right(starts, at + SESSION_SLACK) - 1
+                after, previous = previous, at
+                if latest < 0 or (after is not None and starts[latest] <= after):
                     continue
-                _, ended, session_id, reason = started[-1]
+                _, ended, session_id, reason = sessions[latest]
                 if reason == "compression":
                     session_id = _compression_tip(home, conn, session_id)
                     row = conn.execute("SELECT ended_at FROM sessions WHERE id = ?", (session_id,)).fetchone()

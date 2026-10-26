@@ -580,3 +580,25 @@ def test_another_profiles_sessions_never_match(tmp_path):
     runs = {r["bot"]: r for r in cron.inbox(list(watcher.profile_homes(root)), cron.Follow({}, default="quiet"))}
     assert runs["bot"]["session"] == "cron_j1_20261026_080100"
     assert "session" not in runs["default"]
+
+
+def test_matching_walks_the_job_sessions_once_not_once_per_run(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    rows, runs = [], []
+    for i in range(200):
+        start = datetime(2026, 10, 1 + i // 24, i % 24, 0, 1)
+        rows.append((f"cron_j1_{start:%Y%m%d_%H%M%S}", start, start.replace(second=30), "cron_complete"))
+        runs.append(f"{start:%Y-%m-%d_%H}-00-31")
+    cron_sessions(home, *rows)
+    walks = []
+
+    class Counted(list):
+        def __iter__(self):
+            walks.append(1)
+            return super().__iter__()
+
+    real = cron._job_sessions
+    monkeypatch.setattr(cron, "_job_sessions", lambda conn, job_id: Counted(real(conn, job_id)))
+    found = cron.run_sessions(home, "j1", runs)
+    assert found == {run: sid for run, (sid, *_) in zip(runs, rows)}
+    assert len(walks) <= 1
