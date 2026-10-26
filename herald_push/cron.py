@@ -539,11 +539,10 @@ def _clip(text: str, limit: int) -> str:
 
 
 def as_item(run: Run, limit: int) -> dict:
-    item = {"bot": run.profile, "job": run.job_id, "run": run.run, "label": run.name, "status": run.status,
-            "at": int(run.at), "text": _clip(run.text, limit)}
-    if run.session:
-        item["session"] = run.session
-    return item
+    """A run as the Inbox and ``cron read`` give it. ``session`` is always there, null for a run with none, so
+    the phone can tell that from a plugin too old to say."""
+    return {"bot": run.profile, "job": run.job_id, "run": run.run, "label": run.name, "status": run.status,
+            "at": int(run.at), "text": _clip(run.text, limit), "session": run.session or None}
 
 
 def inbox(homes: Iterable[Tuple[str, Path]], follow: Follow, limit: int = 50, before: float = 0) -> List[dict]:

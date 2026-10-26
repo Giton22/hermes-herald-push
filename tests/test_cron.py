@@ -512,8 +512,7 @@ def test_a_run_names_the_session_it_ran_in_everywhere_it_goes(tmp_path, monkeypa
     handle = commands.make_handler(store, "t", lambda: True, trusted=lambda: True, root=root)
     me = {"device_id": data["device_id"]}
     runs = json.loads(handle("cron inbox " + json.dumps(me)))["runs"]
-    assert [(r["text"], r.get("session")) for r in runs] == [("today", "cron_j1_20261026_210047"), ("yesterday", None)]
-    assert "session" not in runs[1]
+    assert [(r["text"], r["session"]) for r in runs] == [("today", "cron_j1_20261026_210047"), ("yesterday", None)]
     one = json.loads(handle("cron read " + json.dumps({**me, "bot": "default", "job": "j1", "run": "2026-10-26_21-01-12"})))
     assert one["run"]["session"] == "cron_j1_20261026_210047"
 
@@ -537,10 +536,10 @@ def test_a_run_whose_gate_kept_the_agent_asleep_has_no_session(tmp_path):
     cron_sessions(home, ("cron_gate_20261023_230019", at("2026-10-23 23:00:19"), at("2026-10-23 23:00:31"), "cron_complete"))
     runs = {r["text"]: r for r in cron.inbox([("default", home)], cron.Follow({}, default="quiet"))}
     assert runs["woke"]["session"] == "cron_gate_20261023_230019"
-    assert "session" not in runs["still reported"]
+    assert runs["still reported"]["session"] is None
     # Only the newest file kept: the session ended too long before it to be its.
     (home / "cron" / "output" / "gate" / "2026-10-23_23-00-32.md").unlink()
-    assert "session" not in cron.read([("default", home)], "default", "gate", "2026-10-24_11-00-32")
+    assert cron.read([("default", home)], "default", "gate", "2026-10-24_11-00-32")["session"] is None
 
 
 def test_two_runs_of_a_job_each_name_their_own_session(tmp_path):
@@ -565,10 +564,10 @@ def test_a_job_id_with_odd_characters_takes_only_its_own_sessions(tmp_path):
                   ("cron_a_bx_20261026_080101", at("2026-10-26 08:01:02"), at("2026-10-26 08:01:11"), "cron_complete"),
                   ("cron_axb_20261026_080101", at("2026-10-26 08:01:03"), at("2026-10-26 08:01:11"), "cron_complete"))
     runs = cron.inbox([("default", home)], cron.Follow({}, default="quiet"))
-    assert [r.get("session") for r in runs] == [None, None]
+    assert [r["session"] for r in runs] == [None, None]
     cron_sessions(home, ("cron_a.b_20261026_080101", at("2026-10-26 08:01:01"), at("2026-10-26 08:01:11"), "cron_complete"))
     assert cron.read([("default", home)], "default", "a.b", "2026-10-26_08-01-12")["session"] == "cron_a.b_20261026_080101"
-    assert "session" not in cron.read([("default", home)], "default", "a_b", "2026-10-26_08-01-12")
+    assert cron.read([("default", home)], "default", "a_b", "2026-10-26_08-01-12")["session"] is None
 
 
 def test_another_profiles_sessions_never_match(tmp_path):
@@ -579,7 +578,7 @@ def test_another_profiles_sessions_never_match(tmp_path):
     cron_sessions(bot, ("cron_j1_20261026_080100", at("2026-10-26 08:01:01"), at("2026-10-26 08:01:11"), "cron_complete"))
     runs = {r["bot"]: r for r in cron.inbox(list(watcher.profile_homes(root)), cron.Follow({}, default="quiet"))}
     assert runs["bot"]["session"] == "cron_j1_20261026_080100"
-    assert "session" not in runs["default"]
+    assert runs["default"]["session"] is None
 
 
 def test_matching_walks_the_job_sessions_once_not_once_per_run(tmp_path, monkeypatch):
@@ -611,7 +610,7 @@ def test_a_gated_run_never_takes_the_session_of_a_run_that_crashed(tmp_path):
     cron_sessions(home, ("cron_j1_20260915_165424", at("2026-09-15 16:54:35"), None, None))
     late = at("2026-09-15 17:01:19").timestamp() + 3600
     assert cron.run_sessions(home, "j1", ["2026-09-15_17-01-19"], now=late) == {}
-    assert "session" not in cron.read([("default", home)], "default", "j1", "2026-09-15_17-01-19")
+    assert cron.read([("default", home)], "default", "j1", "2026-09-15_17-01-19")["session"] is None
 
 
 def test_a_session_swept_up_as_an_orphan_is_no_runs(tmp_path):
@@ -690,3 +689,26 @@ def test_a_compression_chain_prefers_the_child_compressed_in_turn(tmp_path, monk
                   ("20261026_092500_tip", at("2026-10-26 09:25:00"), at("2026-10-26 09:30:04"), "cron_complete",
                    "20261026_092001_real"))
     assert cron.run_sessions(home, "j1", ["2026-10-26_09-30-05"]) == {"2026-10-26_09-30-05": "20261026_092500_tip"}
+
+
+def test_inbox_and_read_replies_always_say_the_session_null_when_none(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    store = Store(root / "plugin-data" / "herald-push")
+    data, _ = phone()
+    store.upsert(Device.parse(data))
+    cron.Follows(store).set(data["device_id"], cron.Follow({"j1": "quiet"}))
+    write_run(root, "j1", "2026-10-26_21-01-12", agent_run(response="no session"))
+    handle = commands.make_handler(store, "t", lambda: True, trusted=lambda: True, root=root)
+    me = {"device_id": data["device_id"]}
+    inbox = handle("cron inbox " + json.dumps(me))
+    assert json.loads(inbox)["runs"][0]["session"] is None and '"session":null' in inbox
+    one = handle("cron read " + json.dumps({**me, "bot": "default", "job": "j1", "run": "2026-10-26_21-01-12"}))
+    assert json.loads(one)["run"]["session"] is None and '"session":null' in one
+    # The push has a size budget: a run with no session leaves the field out there.
+    sent = []
+    monkeypatch.setattr(push, "publish", lambda device, payload, sig, client=None: sent.append(payload) or True)
+    w = watcher.Watcher(root, store)
+    w.poll_cron(store.devices())
+    write_run(root, "j1", "2026-10-26_22-01-12", agent_run(response="pushed"))
+    assert w.poll_cron(store.devices()) == 1
+    assert "session" not in sent[0]
