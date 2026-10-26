@@ -602,3 +602,52 @@ def test_matching_walks_the_job_sessions_once_not_once_per_run(tmp_path, monkeyp
     found = cron.run_sessions(home, "j1", runs)
     assert found == {run: sid for run, (sid, *_) in zip(runs, rows)}
     assert len(walks) <= 1
+
+
+def test_a_gated_run_never_takes_the_session_of_a_run_that_crashed(tmp_path):
+    home = tmp_path / "home"
+    # Run A crashed: its session never ended and it saved no output. Run B, next, was gated: no session.
+    write_run(home, "j1", "2026-09-15_17-01-19", agent_run(response="gated"))
+    cron_sessions(home, ("cron_j1_20260915_165424", at("2026-09-15 16:54:35"), None, None))
+    late = at("2026-09-15 17:01:19").timestamp() + 3600
+    assert cron.run_sessions(home, "j1", ["2026-09-15_17-01-19"], now=late) == {}
+    assert "session" not in cron.read([("default", home)], "default", "j1", "2026-09-15_17-01-19")
+
+
+def test_a_session_swept_up_as_an_orphan_is_no_runs(tmp_path):
+    home = tmp_path / "home"
+    write_run(home, "j1", "2026-09-15_17-01-19", agent_run(response="gated"))
+    # Hermes' sweep closed the dead session a month on: its end says nothing of when the run finished.
+    cron_sessions(home, ("cron_j1_20260915_165424", at("2026-09-15 16:54:35"), at("2026-10-15 21:40:24"),
+                         "startup_orphan_reap"))
+    assert cron.run_sessions(home, "j1", ["2026-09-15_17-01-19"]) == {}
+    # Not even a sweep that happened to land within the minute.
+    cron_sessions(home, ("cron_j1_20260916_165424", at("2026-09-16 16:54:35"), at("2026-09-16 17:01:30"),
+                         "ws_orphan_reap"))
+    assert cron.run_sessions(home, "j1", ["2026-09-15_17-01-19", "2026-09-16_17-01-19"]) == {}
+
+
+def test_a_session_that_ended_long_after_the_save_is_another_runs(tmp_path):
+    home = tmp_path / "home"
+    cron_sessions(home, ("cron_j1_20261026_080050", at("2026-10-26 08:00:51"), at("2026-10-26 08:05:00"), "cron_complete"))
+    assert cron.run_sessions(home, "j1", ["2026-10-26_08-01-12"]) == {}
+    assert cron.run_sessions(home, "j1", ["2026-10-26_08-04-30"]) == {"2026-10-26_08-04-30": "cron_j1_20261026_080050"}
+
+
+def test_a_session_not_ended_yet_is_a_fresh_runs_own(tmp_path):
+    home = tmp_path / "home"
+    cron_sessions(home, ("cron_j1_20261026_080050", at("2026-10-26 08:00:51"), None, None))
+    saved = at("2026-10-26 08:01:12").timestamp()
+    # The agent may still be finishing just after its output is saved.
+    assert cron.run_sessions(home, "j1", ["2026-10-26_08-01-12"], now=saved + 30) == {
+        "2026-10-26_08-01-12": "cron_j1_20261026_080050"}
+    assert cron.run_sessions(home, "j1", ["2026-10-26_08-01-12"], now=saved + cron.OPEN_SECONDS + 1) == {}
+
+
+def test_a_compression_continuation_swept_up_as_an_orphan_is_no_runs(tmp_path):
+    home = tmp_path / "home"
+    cron_sessions(home,
+                  ("cron_j1_20261026_090000", at("2026-10-26 09:00:01"), at("2026-10-26 09:20:00"), "compression"),
+                  ("20261026_092000_ab12cd", at("2026-10-26 09:20:00"), at("2026-10-26 09:30:00"), "orphaned_compression",
+                   "cron_j1_20261026_090000"))
+    assert cron.run_sessions(home, "j1", ["2026-10-26_09-30-05"]) == {}

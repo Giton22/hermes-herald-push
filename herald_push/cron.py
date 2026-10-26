@@ -48,8 +48,15 @@ MAX_LIST = 100
 # retention, so it only binds where runs are kept forever.
 MAX_SCAN = 2000
 
-# A run's output is saved as soon as its session ends: one that ended longer before belongs to an earlier run.
+# A run's output is saved as soon as its session ends: one that ended longer before or after belongs to
+# another run.
 SESSION_END_WINDOW = 60.0
+# A session not ended yet is a run's own only while the run is this fresh: older, it's a run that crashed.
+OPEN_SECONDS = 10 * 60.0
+# Hermes' sweeps of dead sessions (``startup_orphan_reap``, ``ws_orphan_reap``) stamp the sweep's time as the
+# end, and its reaper of stale compression continuations ends them as ``orphaned_compression``.
+ORPHAN_REAP = "orphan_reap"
+ORPHANED_COMPRESSION = "orphaned_compression"
 # The scheduler names a run's session for the second it started; a run's file, for the second it was saved.
 SESSION_STAMP_RE = re.compile(r"^\d{8}_\d{6}$")
 # A run's name drops the fraction of its second, so its session may seem to start just after it.
@@ -373,17 +380,33 @@ def _compression_tip(home: Path, conn: sqlite3.Connection, session_id: str) -> s
         seen.add(session_id)
 
 
-def run_sessions(home: Path, job_id: str, runs: Iterable[str], zone: Optional[tzinfo] = None) -> Dict[str, str]:
+def _ended_with(at: float, ended: Optional[float], reason: str, now: float) -> bool:
+    """Whether a session that ended at ``ended`` (for ``reason``) is the one a run saved at ``at`` ran in. The
+    scheduler ends a run's session, then saves its output: a session that ended well before or after the save,
+    or that a sweep closed long after it died, is another run's. One not ended yet is taken only for a run
+    saved just now, whose agent may still be finishing; an older one is a run that crashed and never ended."""
+    if reason.endswith(ORPHAN_REAP) or reason == ORPHANED_COMPRESSION:
+        return False
+    if ended is None:
+        return now - at <= OPEN_SECONDS
+    return abs(ended - at) <= SESSION_END_WINDOW
+
+
+def run_sessions(home: Path, job_id: str, runs: Iterable[str], zone: Optional[tzinfo] = None,
+                 now: Optional[float] = None) -> Dict[str, str]:
     """The session each of a job's runs ran in, by run name, from the profile's ``state.db`` (read-only).
 
     ``runs`` are the job's run names, every one kept, so each run is known by the one before it. A run's
     session is the job's latest to start after the run before it finished and by the time this one's output
-    was saved; compression is followed to the continuation it ended in, which must have ended just before the
-    save (or not yet). A run whose script gate kept the agent asleep has no session, and none is given.
+    was saved; compression is followed to the continuation it ended in. That session must have ended within a
+    minute of the save, and not by a sweep of dead sessions. A run whose script gate kept the agent asleep, or
+    whose latest session belongs to a run that crashed, has no session, and none is given: no session is
+    better than another run's.
     """
     db_path = home / "state.db"
     if not db_path.is_file():
         return {}
+    now = time.time() if now is None else now
     found: Dict[str, str] = {}
     try:
         conn = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True, timeout=2.0)
@@ -401,11 +424,11 @@ def run_sessions(home: Path, job_id: str, runs: Iterable[str], zone: Optional[tz
                 _, ended, session_id, reason = sessions[latest]
                 if reason == "compression":
                     session_id = _compression_tip(home, conn, session_id)
-                    row = conn.execute("SELECT ended_at FROM sessions WHERE id = ?", (session_id,)).fetchone()
-                    ended = row[0] if row else None
-                if ended is not None and ended < at - SESSION_END_WINDOW:
-                    continue
-                found[run] = session_id
+                    row = conn.execute("SELECT ended_at, end_reason FROM sessions WHERE id = ?",
+                                       (session_id,)).fetchone()
+                    ended, reason = (row[0], row[1] or "") if row else (None, "")
+                if _ended_with(at, ended, reason, now):
+                    found[run] = session_id
         finally:
             conn.close()
     except (sqlite3.Error, ValueError):
