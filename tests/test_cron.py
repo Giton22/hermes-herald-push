@@ -651,3 +651,42 @@ def test_a_compression_continuation_swept_up_as_an_orphan_is_no_runs(tmp_path):
                   ("20261026_092000_ab12cd", at("2026-10-26 09:20:00"), at("2026-10-26 09:30:00"), "orphaned_compression",
                    "cron_j1_20261026_090000"))
     assert cron.run_sessions(home, "j1", ["2026-10-26_09-30-05"]) == {}
+
+
+def test_a_compressed_run_follows_its_continuation_not_a_fork_of_it(tmp_path, monkeypatch):
+    import sqlite3
+    monkeypatch.setitem(sys.modules, "hermes_state", None)  # the fallback, as where Hermes isn't importable
+    home = tmp_path / "home"
+    write_run(home, "j1", "2026-10-26_09-30-05", agent_run())
+    cron_sessions(home,
+                  ("cron_j1_20261026_090000", at("2026-10-26 09:00:01"), at("2026-10-26 09:20:00"), "compression"),
+                  # Started before the continuation: a branch, a delegate and a tool's session, all forks.
+                  ("20261026_091000_branch", at("2026-10-26 09:10:00"), at("2026-10-26 09:30:00"), "cron_complete",
+                   "cron_j1_20261026_090000"),
+                  ("20261026_091500_tool", at("2026-10-26 09:15:00"), at("2026-10-26 09:30:00"), "cron_complete",
+                   "cron_j1_20261026_090000"),
+                  ("20261026_092000_ab12cd", at("2026-10-26 09:20:00"), at("2026-10-26 09:30:04"), "cron_complete",
+                   "cron_j1_20261026_090000"))
+    conn = sqlite3.connect(home / "state.db")
+    conn.execute("ALTER TABLE sessions ADD COLUMN model_config TEXT")
+    conn.execute("UPDATE sessions SET model_config = ? WHERE id = '20261026_091000_branch'",
+                 (json.dumps({"_branched_from": "cron_j1_20261026_090000"}),))
+    conn.execute("UPDATE sessions SET source = 'tool' WHERE id = '20261026_091500_tool'")
+    conn.commit()
+    conn.close()
+    assert cron.read([("default", home)], "default", "j1", "2026-10-26_09-30-05")["session"] == "20261026_092000_ab12cd"
+
+
+def test_a_compression_chain_prefers_the_child_compressed_in_turn(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "hermes_state", None)
+    home = tmp_path / "home"
+    cron_sessions(home,
+                  ("cron_j1_20261026_090000", at("2026-10-26 09:00:01"), at("2026-10-26 09:20:00"), "compression"),
+                  # A stale sibling closed by a sweep, then the real continuation, compressed again.
+                  ("20261026_092000_stale", at("2026-10-26 09:20:00"), at("2026-10-26 09:21:00"), "ws_orphan_reap",
+                   "cron_j1_20261026_090000"),
+                  ("20261026_092001_real", at("2026-10-26 09:20:01"), at("2026-10-26 09:25:00"), "compression",
+                   "cron_j1_20261026_090000"),
+                  ("20261026_092500_tip", at("2026-10-26 09:25:00"), at("2026-10-26 09:30:04"), "cron_complete",
+                   "20261026_092001_real"))
+    assert cron.run_sessions(home, "j1", ["2026-10-26_09-30-05"]) == {"2026-10-26_09-30-05": "20261026_092500_tip"}

@@ -357,7 +357,9 @@ def _job_sessions(conn: sqlite3.Connection, job_id: str) -> List[Tuple[float, Op
 
 def _compression_tip(home: Path, conn: sqlite3.Connection, session_id: str) -> str:
     """The continuation a compressed session ended in: Hermes' own lineage rule, or where Hermes isn't
-    importable, each session's first child after it ended for compression."""
+    importable, the same rule read here: each step takes the compressed session's continuation, never a fork
+    of it (branch, delegate, reset, a tool's session), preferring one compressed in turn, then one still open,
+    then the latest active."""
     try:
         from hermes_state import SessionDB
         db = SessionDB(db_path=home / "state.db", read_only=True)
@@ -367,17 +369,50 @@ def _compression_tip(home: Path, conn: sqlite3.Connection, session_id: str) -> s
             db.close()
     except Exception:  # not importable, or a state.db it can't read
         pass
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+    config = "model_config" if "model_config" in columns else "NULL"
+    active = "last_activity_at" if "last_activity_at" in columns else "NULL"
+    said = ("(SELECT MAX(timestamp) FROM messages WHERE session_id = sessions.id)"
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages'").fetchone()
+            else "NULL")
     seen = {session_id}
     while True:
         row = conn.execute("SELECT end_reason FROM sessions WHERE id = ?", (session_id,)).fetchone()
         if not row or row[0] != "compression":
             return session_id
-        child = conn.execute("SELECT id FROM sessions WHERE parent_session_id = ? ORDER BY started_at LIMIT 1",
-                             (session_id,)).fetchone()
-        if not child or child[0] in seen:
+        children = conn.execute(
+            f"SELECT id, source, {config}, end_reason, ended_at, started_at, {active}, {said} FROM sessions"
+            " WHERE parent_session_id = ?", (session_id,)).fetchall()
+        live = [c for c in children if c[0] not in seen and _continues(c[1], c[2])]
+        if not live:
             return session_id
-        session_id = child[0]
+        # Hermes' order: a child compressed in turn, then one still open, then the latest active (its last
+        # activity or message, else its start), then the latest started, then the id.
+        live.sort(key=lambda c: c[0], reverse=True)
+        session_id = min(live, key=lambda c: (0 if c[3] == "compression" else 1 if c[4] is None else 2,
+                                              -(max(_epoch(c[6]), _epoch(c[7])) or _epoch(c[5])),
+                                              -_epoch(c[5])))[0]
         seen.add(session_id)
+
+
+def _epoch(value: Optional[float]) -> float:
+    try:
+        return float(value) if value is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _continues(source: Optional[str], model_config: Optional[str]) -> bool:
+    """Whether a compressed session's child is its continuation, by Hermes' chain rule: not a tool's session,
+    nor a branch, delegate or reset forked from it (marked so in its model config)."""
+    if source == "tool":
+        return False
+    try:
+        marks = json.loads(model_config) if model_config else {}
+    except ValueError:
+        marks = {}
+    return not isinstance(marks, dict) or all(
+        marks.get(mark) is None for mark in ("_branched_from", "_delegate_from", "_reset_from"))
 
 
 def _ended_with(at: float, ended: Optional[float], reason: str, now: float) -> bool:
