@@ -15,7 +15,7 @@ from .watcher import Watcher, is_long_lived_process
 
 log = logging.getLogger(__name__)
 
-VERSION = "0.5.1"
+VERSION = "0.5.2"
 
 # A ring's push: what it says fits ntfy's 4096-byte message limit once sealed (base64 grows it by a third).
 MAX_REASON_BYTES = 600
@@ -68,7 +68,7 @@ def register(ctx) -> None:
     phones = Phones(store, wake)
     register_tools(ctx, phones)
     ctx.register_command("herald-push", make_handler(store, VERSION, watching, phones=phones, root=root),
-                         description="Herald push notifications and phone tools: phones registered with this gateway",
+                         description="Kyllene push notifications and phone tools: phones registered with this gateway",
                          args_hint="info | register <json> | unregister <id> | test <id> | phone …")
 
     if not is_long_lived_process():
