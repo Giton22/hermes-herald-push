@@ -454,7 +454,15 @@ def test_every_schema_is_a_closed_object():
     for name, (schema, timeout, _) in phone.TOOLS.items():
         assert schema["name"] == name and name.startswith("phone_")
         assert schema["parameters"]["additionalProperties"] is False
-        assert timeout in (phone.READ_TIMEOUT, phone.CONFIRM_TIMEOUT, phone.CALL_TIMEOUT)
+        assert timeout in (phone.READ_TIMEOUT, phone.CONFIRM_TIMEOUT, phone.CALL_TIMEOUT, phone.SCREEN_TIMEOUT)
+
+
+def test_a_screen_takes_a2ui_messages_and_waits_for_a_tap():
+    schema, timeout, _ = phone.TOOLS["phone_show_ui"]
+    params = schema["parameters"]
+    assert set(params["properties"]) == {"messages", "wait"} and params["required"] == ["messages"]
+    assert params["properties"]["messages"]["maxItems"] == phone.MAX_SCREEN_MESSAGES
+    assert timeout == phone.SCREEN_TIMEOUT
 
 
 def test_a_call_takes_no_number_only_a_reason():

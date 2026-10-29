@@ -1,6 +1,6 @@
 name: herald-push
 label: Kyllene push
-version: 0.5.2
+version: 0.6.0
 manifest_version: 2
 requires_hermes: ">=0.21.5"
 description: >
@@ -10,7 +10,8 @@ description: >
   register themselves from Kyllene over the authenticated dashboard connection. Also the phone tools: the
   agent can read the phone's battery, place or calendar, set an alarm and more, only the tools the user
   switched on in Kyllene, and every change asks on the phone first. With Calls on in Kyllene, the agent can
-  ring the user's own phone and watch for something urgent, and talk it over by voice.
+  ring the user's own phone and watch for something urgent, and talk it over by voice. And, as an
+  experiment, it can draw a small screen in the chat (A2UI) and wait for the user's tap.
 author: Giton22
 homepage: https://github.com/Giton22/hermes-herald-push
 license: MIT
@@ -28,6 +29,7 @@ provides_tools:
   - phone_contacts
   - phone_health
   - phone_call_me
+  - phone_show_ui
 config_schema:
   enabled:
     type: bool

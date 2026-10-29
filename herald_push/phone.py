@@ -60,6 +60,30 @@ READ_TIMEOUT = 30
 CONFIRM_TIMEOUT = 120
 # A call rings 45 seconds on the phone; the rest is for the push to get there and the answer to come back.
 CALL_TIMEOUT = 75
+# A screen in the chat waits for the user to look and tap.
+SCREEN_TIMEOUT = 300
+MAX_SCREEN_MESSAGES = 100
+
+_SCREEN = (
+    "Show the user a small screen under your reply in Kyllene on their phone, made of A2UI v0.9 messages, and "
+    "(with wait, the default) wait up to 5 minutes for them to tap a button. For choices, confirmations and short "
+    "forms; keep it small and still say the question in your reply. Returns {event, surface_id, component_id, "
+    "context, data} for the button tapped (data: the form's values, when createSurface had sendDataModel true), "
+    "{shown: true} with wait false, or an error to fix and try again. Messages, in order: "
+    '{"version":"v0.9","createSurface":{"surfaceId":"pick-1","catalogId":'
+    '"https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json","sendDataModel":true}}, then '
+    '{"version":"v0.9","updateComponents":{"surfaceId":"pick-1","components":[...]}} with one component whose id '
+    'is "root"; optionally {"version":"v0.9","updateDataModel":{"surfaceId":"pick-1","path":"/","value":{...}}} '
+    "for starting values. Components are a flat list, each {id, component, ...props}, children named by id: "
+    "Column and Row {children:[ids], justify, align}, Card {child}, List {children, direction}, Divider, "
+    "Text {text, variant: h1-h5, body or caption}, Icon {name}, Button {child: a Text's id, variant: default, "
+    'primary or borderless, action: {"event":{"name":"...","context":{...}}}}, TextField {label, value, variant: '
+    "shortText, longText, number or obscured}, CheckBox {label, value}, ChoicePicker {label, options: "
+    "[{label, value}], value: a list, variant: mutuallyExclusive or multipleSelection}, Slider {label, min, max, "
+    "value}, DateTimeInput {label, value, enableDate, enableTime}, Tabs {tabs:[{title, child}]}. Bind a form "
+    'field to the data with value: {"path":"/name"}. Pictures, video and audio aren\'t shown. Use a new surfaceId '
+    "for each call; a call is the whole screen."
+)
 
 # The agent rings the user's own phone. It never takes a number: the phone it rings is the user's own Herald.
 CALL_TOOL = "phone_call_me"
@@ -226,6 +250,14 @@ TOOLS: Dict[str, tuple] = {
             "details": {"type": "string", "maxLength": MAX_DETAILS,
                         "description": "Optional background for the call: what happened, deadlines, the options."},
         }, ["reason"]), CALL_TIMEOUT, "📞"),
+    "phone_show_ui": (_schema(
+        "phone_show_ui",
+        _SCREEN,
+        {
+            "messages": {"type": "array", "minItems": 1, "maxItems": MAX_SCREEN_MESSAGES,
+                         "items": {"type": "object"}, "description": "A2UI messages, in the order they apply."},
+            "wait": {"type": "boolean", "description": "Wait for a tap (default true); false only shows it."},
+        }, ["messages"]), SCREEN_TIMEOUT, "🧩"),
 }
 
 
