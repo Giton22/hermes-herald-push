@@ -73,7 +73,8 @@ _SCREEN = (
     "open in Kyllene on Android: from anywhere else it fails within seconds, so ask in words then. For choices, "
     "confirmations and short forms; keep it small and still say the question in your reply. Returns {event, "
     "surface_id, component_id, context, data} for the button tapped (data: the form's values, when createSurface "
-    "had sendDataModel true), {shown: true} with wait false, or an error to fix and try again. Messages, in order "
+    "had sendDataModel true), {shown: true} with wait false (then a tap comes later as the user's next message, "
+    "starting \"Tapped\"), or an error to fix and try again. Messages, in order "
     "(SURFACE is an id you make up, new for each call): "
     '{"version":"v0.9","createSurface":{"surfaceId":"SURFACE","catalogId":'
     '"https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json","sendDataModel":true}}, then '
