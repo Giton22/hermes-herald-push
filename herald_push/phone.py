@@ -75,20 +75,28 @@ _SCREEN = (
     "surface_id, component_id, context, data} for the button tapped (data: the form's values, when createSurface "
     "had sendDataModel true), {shown: true} with wait false (then a tap comes later as the user's next message, "
     "starting \"Tapped\"), or an error to fix and try again. Messages, in order "
-    "(SURFACE is an id you make up, new for each call): "
+    "(SURFACE is an id you make up, new for each screen): "
     '{"version":"v0.9","createSurface":{"surfaceId":"SURFACE","catalogId":'
-    '"https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json","sendDataModel":true}}, then '
+    '"https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json","sendDataModel":true}} (optionally '
+    '"theme":{"primaryColor":"#RRGGBB"}), then '
     '{"version":"v0.9","updateComponents":{"surfaceId":"SURFACE","components":[...]}} with one component whose id '
     'is "root"; optionally {"version":"v0.9","updateDataModel":{"surfaceId":"SURFACE","path":"/","value":{...}}} '
     "for starting values. Components are a flat list, each {id, component, ...props}, children named by id: "
-    "Column and Row {children:[ids], justify, align}, Card {child}, Divider, "
-    "Text {text, variant: h1-h5, body or caption}, Icon {name}, Button {child: a Text's id, variant: default, "
-    'primary or borderless, action: {"event":{"name":"...","context":{...}}}}, TextField {label, value, variant: '
-    "shortText, longText, number or obscured}, CheckBox {label, value}, ChoicePicker {label, options: "
-    "[{label, value}], value: a list, variant: mutuallyExclusive or multipleSelection}, Slider {label, min, max, "
-    "value}, DateTimeInput {label, value, enableDate, enableTime}, Tabs {tabs:[{title, child}]}. Bind a form "
-    'field to the data with value: {"path":"/name"}. Pictures, video and audio aren\'t shown. A call is the whole '
-    "screen."
+    "Column and Row {children:[ids], justify, align}, List {children, direction: vertical or horizontal}, Card "
+    "{child}, Divider, Modal {trigger: a Button's id, content}, Tabs {tabs:[{title, child}]}, "
+    "Text {text, variant: h1-h5, body or caption}, Icon {name}, Image {url, fit, variant: icon, avatar, "
+    "smallFeature, mediumFeature, largeFeature or header}, Video {url}, AudioPlayer {url, description}, "
+    "Button {child: a Text's id, variant: default, primary (the main action) or borderless, action: "
+    '{"event":{"name":"...","context":{...}}} to answer, or {"functionCall":{"call":"openUrl","args":{"url":'
+    '"https://..."}}} to open a link}, TextField {label, value, variant: shortText, longText, number or obscured}, '
+    "CheckBox {label, value}, ChoicePicker {label, options: [{label, value}], value: a list, variant: "
+    "mutuallyExclusive or multipleSelection}, Slider {label, min, max, value}, DateTimeInput {label, value, "
+    'enableDate, enableTime}. Bind a form field to the data with value: {"path":"/name"}. Fields and buttons take '
+    'checks: [{"call":"required","args":{"value":{"path":"/name"}},"message":"..."}] (also email, regex, length, '
+    "numeric); a button with a failing check can't be tapped. Pictures and media load from http(s) URLs only. To "
+    "change a screen you showed in this chat (progress, the next step), call again with only updateComponents, "
+    "updateDataModel or deleteSurface for its surfaceId, no createSurface: it changes in place, and what the user "
+    "typed stays unless your update replaces that data."
 )
 
 # The agent rings the user's own phone. It never takes a number: the phone it rings is the user's own Herald.
@@ -677,8 +685,9 @@ SCREEN_HINT = (
     "The user's Kyllene app on Android can show a small screen under your reply with phone_show_ui. When you "
     "ask the user to pick between a few options, confirm or cancel something, or fill in a few values, call "
     "phone_show_ui for it instead of listing the choices in text or writing an HTML page, and still say the "
-    "question in your reply. Not for answers, long content or anything to read. If the call says the user can't "
-    "see it, ask in words."
+    "question in your reply. Not for answers, long content or anything to read. To show progress or the next "
+    "step, update the screen you showed rather than drawing a new one. If the call says the user can't see it, "
+    "ask in words."
 )
 
 

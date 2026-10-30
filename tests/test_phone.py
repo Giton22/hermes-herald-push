@@ -507,9 +507,13 @@ def test_a_screen_takes_a2ui_messages_and_waits_for_a_tap():
     # What the agent is taught is what Kyllene's catalog draws.
     description = schema["description"]
     assert "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json" in description
+    # Kyllene draws pictures and media, and changes a screen in place.
+    for word in ("Image", "Video", "AudioPlayer", "List", "Modal", "openUrl", "primaryColor", "deleteSurface"):
+        assert word in description
+    assert "aren't shown" not in description
     assert '"version":"v0.9"' in description and '"root"' in description
-    # Lists are lazy and the chat is one too; a fixed id would be copied into every call.
-    assert "List {" not in description and "pick-1" not in description
+    # A fixed id would be copied into every call.
+    assert "pick-1" not in description
 
 
 def test_a_call_takes_no_number_only_a_reason():
