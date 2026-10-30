@@ -63,10 +63,13 @@ CALL_TIMEOUT = 75
 # A screen in the chat waits for the user to look and tap.
 SCREEN_TIMEOUT = 300
 MAX_SCREEN_MESSAGES = 100
+SHOW_UI_TOOL = "phone_show_ui"
 
 _SCREEN = (
-    "Show the user a small screen under your reply in Kyllene on their Android phone, made of A2UI v0.9 messages, "
-    "and (with wait, the default) wait up to 5 minutes for them to tap a button. Only for a chat the user has "
+    "Use this, not a list in text or an HTML page, when you ask the user to pick between options, confirm, or "
+    "fill in a few values. "
+    "Shows the user a small screen under your reply in Kyllene on their Android phone, made of A2UI v0.9 messages, "
+    "and (with wait, the default) waits up to 5 minutes for them to tap a button. Only for a chat the user has "
     "open in Kyllene on Android: from anywhere else it fails within seconds, so ask in words then. For choices, "
     "confirmations and short forms; keep it small and still say the question in your reply. Returns {event, "
     "surface_id, component_id, context, data} for the button tapped (data: the form's values, when createSurface "
@@ -252,8 +255,8 @@ TOOLS: Dict[str, tuple] = {
             "details": {"type": "string", "maxLength": MAX_DETAILS,
                         "description": "Optional background for the call: what happened, deadlines, the options."},
         }, ["reason"]), CALL_TIMEOUT, "📞"),
-    "phone_show_ui": (_schema(
-        "phone_show_ui",
+    SHOW_UI_TOOL: (_schema(
+        SHOW_UI_TOOL,
         _SCREEN,
         {
             "messages": {"type": "array", "minItems": 1, "maxItems": MAX_SCREEN_MESSAGES,
@@ -668,6 +671,34 @@ _watch_lock = threading.Lock()
 _watch: Optional[_Watch] = None
 
 
+SCREEN_HINT_ID = "kyllene-screens"
+SCREEN_HINT = (
+    "The user's Kyllene app on Android can show a small screen under your reply with phone_show_ui. When you "
+    "ask the user to pick between a few options, confirm or cancel something, or fill in a few values, call "
+    "phone_show_ui for it instead of listing the choices in text or writing an HTML page, and still say the "
+    "question in your reply. Not for answers, long content or anything to read. If the call says the user can't "
+    "see it, ask in words."
+)
+
+
+def screen_hint(phones: Phones) -> str:
+    """When to draw a screen, for a new chat's instructions: only while a phone has the tool on, as the tool."""
+    if not phones.offered(SHOW_UI_TOOL) or on_messaging_platform():
+        return ""
+    return SCREEN_HINT
+
+
+def register_screen_hint(ctx, phones: Phones) -> None:
+    """A tool's description alone rarely makes the agent pick it over text: the chat's instructions say when."""
+    register = getattr(ctx, "register_system_prompt_section", None)
+    if register is None:  # older Hermes: the tool's description is all the agent reads
+        return
+    try:
+        register(SCREEN_HINT_ID, lambda _info: screen_hint(phones))
+    except (TypeError, ValueError) as e:
+        log.warning("herald-push: no screen hint in the chat's instructions: %s", e)
+
+
 def register_tools(ctx, phones: Phones) -> None:
     """Every phone tool, each offered only while a phone has it on."""
     global _watch
@@ -694,6 +725,8 @@ def register_tools(ctx, phones: Phones) -> None:
 
         ctx.register_tool(name=name, toolset=TOOLSET, schema=schema, handler=handler,
                           check_fn=no_cache_check_fn(check), emoji=emoji)
+
+    register_screen_hint(ctx, phones)
 
     with _watch_lock:
         if _watch is None:

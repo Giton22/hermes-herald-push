@@ -414,6 +414,28 @@ def test_tools_are_offered_only_while_a_phone_has_them_on(tmp_path, ctx):
     assert json.loads(handler({}, session_id="s", task_id="t", user_task="u")) == {"level": 5}
 
 
+def test_a_new_chat_is_told_when_to_draw_a_screen_only_while_a_phone_can(tmp_path, ctx, monkeypatch):
+    sections = {}
+    # As Hermes does it: an id, and text or a callable of the session's info, frozen into each new chat.
+    ctx.register_system_prompt_section = lambda id, content, **_kw: sections.setdefault(id, content)
+    phones = Phones(Store(tmp_path))
+    phone.register_tools(ctx, phones)
+    render = sections[phone.SCREEN_HINT_ID]
+    info = {"session_id": "s", "model": "m", "provider": "p", "platform": "", "profile_name": "default", "cwd": ""}
+    assert render(info) == ""
+    phones.report(PHONE, KEY, "Pixel", [phone.SHOW_UI_TOOL])
+    assert phone.SHOW_UI_TOOL in render(info) and "HTML" in render(info)
+    # Fits Hermes's cap on one section, with room for others.
+    assert len(render(info)) < 1000
+    monkeypatch.setattr(phone, "on_messaging_platform", lambda: True)
+    assert render(info) == ""
+
+
+def test_an_older_hermes_without_prompt_sections_still_gets_the_tools(tmp_path, ctx):
+    phone.register_tools(ctx, Phones(Store(tmp_path)))
+    assert phone.SHOW_UI_TOOL in ctx.tools
+
+
 def test_the_handler_routes_by_the_turns_chat_connection(tmp_path, ctx, monkeypatch):
     monkeypatch.setattr(phone, "turn_connection", lambda: "sid-pixel")
     phones = Phones(Store(tmp_path))
