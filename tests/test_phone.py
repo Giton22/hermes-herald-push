@@ -1,7 +1,9 @@
 import json
 import os
+import sys
 import threading
 import time
+import types
 
 import pytest
 
@@ -416,8 +418,14 @@ def test_tools_are_offered_only_while_a_phone_has_them_on(tmp_path, ctx):
 
 def test_a_new_chat_is_told_when_to_draw_a_screen_only_while_a_phone_can(tmp_path, ctx, monkeypatch):
     sections = {}
-    # As Hermes does it: an id, and text or a callable of the session's info, frozen into each new chat.
-    ctx.register_system_prompt_section = lambda id, content, **_kw: sections.setdefault(id, content)
+
+    def register(id, content, **_kw):
+        # As Hermes does it: an id once, and text or a callable of the session's info, frozen into each new chat.
+        if id in sections:
+            raise ValueError(f"system prompt section {id!r} is already registered")
+        sections[id] = content
+
+    ctx.register_system_prompt_section = register
     phones = Phones(Store(tmp_path))
     phone.register_tools(ctx, phones)
     render = sections[phone.SCREEN_HINT_ID]
@@ -427,8 +435,19 @@ def test_a_new_chat_is_told_when_to_draw_a_screen_only_while_a_phone_can(tmp_pat
     assert phone.SHOW_UI_TOOL in render(info) and "HTML" in render(info)
     # Fits Hermes's cap on one section, with room for others.
     assert len(render(info)) < 1000
+    # A chat from a messaging platform is known by its info, before any turn sets the session's context.
+    gateway = types.ModuleType("gateway")
+    session_context = types.ModuleType("gateway.session_context")
+    session_context.NON_MESSAGING_SESSION_SURFACES = frozenset({"cli", "tui", "api_server"})
+    monkeypatch.setitem(sys.modules, "gateway", gateway)
+    monkeypatch.setitem(sys.modules, "gateway.session_context", session_context)
+    assert render({**info, "platform": "telegram"}) == ""
+    assert render({**info, "platform": "tui"}) == phone.SCREEN_HINT
     monkeypatch.setattr(phone, "on_messaging_platform", lambda: True)
     assert render(info) == ""
+    # Registered again in the same process (a reinstall), it's refused, and the tools still are there.
+    phone.register_tools(ctx, phones)
+    assert phone.SHOW_UI_TOOL in ctx.tools
 
 
 def test_an_older_hermes_without_prompt_sections_still_gets_the_tools(tmp_path, ctx):

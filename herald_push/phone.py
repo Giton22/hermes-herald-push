@@ -681,9 +681,25 @@ SCREEN_HINT = (
 )
 
 
-def screen_hint(phones: Phones) -> str:
-    """When to draw a screen, for a new chat's instructions: only while a phone has the tool on, as the tool."""
-    if not phones.offered(SHOW_UI_TOOL) or on_messaging_platform():
+def messaging_platform(platform: str) -> bool:
+    """Whether a chat's [platform] is a messaging one, as Hermes tells them apart; unknown counts as no."""
+    ident = str(platform or "").strip().lower()
+    if not ident:
+        return False
+    try:
+        from gateway.session_context import NON_MESSAGING_SESSION_SURFACES
+    except ImportError:
+        return False
+    return ident not in NON_MESSAGING_SESSION_SURFACES
+
+
+def screen_hint(phones: Phones, info=None) -> str:
+    """When to draw a screen, for a new chat's instructions: only while a phone has the tool on, as the tool,
+    and not on a messaging platform. [info] is the chat's, from Hermes: its platform is known when the
+    instructions are built, before any turn has started."""
+    if not phones.offered(SHOW_UI_TOOL):
+        return ""
+    if messaging_platform((info or {}).get("platform", "")) or on_messaging_platform():
         return ""
     return SCREEN_HINT
 
@@ -694,7 +710,7 @@ def register_screen_hint(ctx, phones: Phones) -> None:
     if register is None:  # older Hermes: the tool's description is all the agent reads
         return
     try:
-        register(SCREEN_HINT_ID, lambda _info: screen_hint(phones))
+        register(SCREEN_HINT_ID, lambda info: screen_hint(phones, info))
     except (TypeError, ValueError) as e:
         log.warning("herald-push: no screen hint in the chat's instructions: %s", e)
 
