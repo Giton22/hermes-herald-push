@@ -347,7 +347,7 @@ class Watcher:
                     continue
                 payload = push.message(
                     "cron_run", bot=run.profile, job=run.job_id, run=run.run, label=run.name,
-                    status=run.status, notify=notify, text=push.clip(run.text), at=int(run.at),
+                    status=run.status, notify=notify, text=push.clip(run.text), at=int(run.at), session=run.session,
                 )
                 if push.publish(device, payload, sig, client):
                     sent += 1

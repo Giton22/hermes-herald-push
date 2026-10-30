@@ -469,3 +469,114 @@ def test_paging_reaches_a_busy_jobs_older_runs(tmp_path):
     first = cron.inbox([("default", home)], follow, limit=30)
     older = cron.inbox([("default", home)], follow, limit=30, before=min(r["at"] for r in first))
     assert [r["text"] for r in first + older] == [f"r{i}" for i in reversed(range(40))]
+
+
+# ── the session each run ran in ──────────────────────────────────────────────
+
+def cron_sessions(home, *rows):
+    """Cron sessions in the profile's state.db: (id, started, ended, end reason[, parent]) with datetimes."""
+    import sqlite3
+    home.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(home / "state.db")
+    conn.execute("CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, parent_session_id TEXT,"
+                 " started_at REAL NOT NULL, ended_at REAL, end_reason TEXT)")
+    for sid, started, ended, reason, *parent in rows:
+        conn.execute("INSERT INTO sessions VALUES (?, 'cron', ?, ?, ?, ?)",
+                     (sid, parent[0] if parent else None, started.timestamp(), ended and ended.timestamp(), reason))
+    conn.commit()
+    conn.close()
+
+
+def at(stamp):
+    return datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S")
+
+
+def test_a_run_names_the_session_it_ran_in_everywhere_it_goes(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    store = Store(root / "plugin-data" / "herald-push")
+    data, _ = phone()
+    store.upsert(Device.parse(data))
+    cron.Follows(store).set(data["device_id"], cron.Follow({"j1": "notify"}))
+    write_run(root, "j1", "2026-10-25_21-01-12", agent_run(response="yesterday"))
+    w = watcher.Watcher(root, store)
+    w.poll_cron(store.devices())
+    cron_sessions(root, ("cron_j1_20261026_210047", at("2026-10-26 21:01:00"), at("2026-10-26 21:01:12"), "cron_complete"))
+    write_run(root, "j1", "2026-10-26_21-01-12", agent_run(response="today"))
+    sent = []
+    monkeypatch.setattr(push, "publish", lambda device, payload, sig, client=None: sent.append(payload) or True)
+    assert w.poll_cron(store.devices()) == 1
+    assert sent[0]["session"] == "cron_j1_20261026_210047"
+    _, _, sig = store.identity()
+    assert len(push.envelope_for(store.devices()[0], sent[0], sig)) <= push.MAX_BODY
+
+    handle = commands.make_handler(store, "t", lambda: True, trusted=lambda: True, root=root)
+    me = {"device_id": data["device_id"]}
+    runs = json.loads(handle("cron inbox " + json.dumps(me)))["runs"]
+    assert [(r["text"], r.get("session")) for r in runs] == [("today", "cron_j1_20261026_210047"), ("yesterday", None)]
+    assert "session" not in runs[1]
+    one = json.loads(handle("cron read " + json.dumps({**me, "bot": "default", "job": "j1", "run": "2026-10-26_21-01-12"})))
+    assert one["run"]["session"] == "cron_j1_20261026_210047"
+
+
+def test_a_compressed_run_names_the_continuation_it_ended_in(tmp_path):
+    home = tmp_path / "home"
+    write_run(home, "j1", "2026-10-26_09-30-05", agent_run())
+    cron_sessions(home,
+                  ("cron_j1_20261026_090000", at("2026-10-26 09:00:01"), at("2026-10-26 09:20:00"), "compression"),
+                  ("20261026_092000_ab12cd", at("2026-10-26 09:20:00"), at("2026-10-26 09:25:00"), "compression",
+                   "cron_j1_20261026_090000"),
+                  ("20261026_092500_ef34ab", at("2026-10-26 09:25:00"), at("2026-10-26 09:30:04"), "cron_complete",
+                   "20261026_092000_ab12cd"))
+    assert cron.read([("default", home)], "default", "j1", "2026-10-26_09-30-05")["session"] == "20261026_092500_ef34ab"
+
+
+def test_a_run_whose_gate_kept_the_agent_asleep_has_no_session(tmp_path):
+    home = tmp_path / "home"
+    write_run(home, "gate", "2026-10-23_23-00-32", agent_run(response="woke"))
+    write_run(home, "gate", "2026-10-24_11-00-32", agent_run(response="still reported"))
+    cron_sessions(home, ("cron_gate_20261023_230019", at("2026-10-23 23:00:19"), at("2026-10-23 23:00:31"), "cron_complete"))
+    runs = {r["text"]: r for r in cron.inbox([("default", home)], cron.Follow({}, default="quiet"))}
+    assert runs["woke"]["session"] == "cron_gate_20261023_230019"
+    assert "session" not in runs["still reported"]
+    # Only the newest file kept: the session ended too long before it to be its.
+    (home / "cron" / "output" / "gate" / "2026-10-23_23-00-32.md").unlink()
+    assert "session" not in cron.read([("default", home)], "default", "gate", "2026-10-24_11-00-32")
+
+
+def test_two_runs_of_a_job_each_name_their_own_session(tmp_path):
+    home = tmp_path / "home"
+    write_run(home, "j1", "2026-10-26_08-01-12", agent_run(response="first"))
+    write_run(home, "j1", "2026-10-26_09-01-14", agent_run(response="second"))
+    cron_sessions(home,
+                  ("cron_j1_20261026_090047", at("2026-10-26 09:01:00"), at("2026-10-26 09:01:13"), "cron_complete"),
+                  ("cron_j1_20261026_080050", at("2026-10-26 08:01:01"), at("2026-10-26 08:01:11"), "cron_complete"))
+    runs = cron.inbox([("default", home)], cron.Follow({"j1": "quiet"}))
+    assert [(r["text"], r["session"]) for r in runs] == [("second", "cron_j1_20261026_090047"),
+                                                          ("first", "cron_j1_20261026_080050")]
+
+
+def test_a_job_id_with_odd_characters_takes_only_its_own_sessions(tmp_path):
+    home = tmp_path / "home"
+    write_run(home, "a_b", "2026-10-26_08-01-12", agent_run(response="mine"))
+    write_run(home, "a.b", "2026-10-26_08-01-12", agent_run(response="dot"))
+    # Sessions of jobs "a_b_c" and "a_bx" (what LIKE 'cron_a_b_%' would also match), and none of a_b's own.
+    cron_sessions(home,
+                  ("cron_a_b_c_20261026_080100", at("2026-10-26 08:01:01"), at("2026-10-26 08:01:11"), "cron_complete"),
+                  ("cron_a_bx_20261026_080101", at("2026-10-26 08:01:02"), at("2026-10-26 08:01:11"), "cron_complete"),
+                  ("cron_axb_20261026_080101", at("2026-10-26 08:01:03"), at("2026-10-26 08:01:11"), "cron_complete"))
+    runs = cron.inbox([("default", home)], cron.Follow({}, default="quiet"))
+    assert [r.get("session") for r in runs] == [None, None]
+    cron_sessions(home, ("cron_a.b_20261026_080101", at("2026-10-26 08:01:01"), at("2026-10-26 08:01:11"), "cron_complete"))
+    assert cron.read([("default", home)], "default", "a.b", "2026-10-26_08-01-12")["session"] == "cron_a.b_20261026_080101"
+    assert "session" not in cron.read([("default", home)], "default", "a_b", "2026-10-26_08-01-12")
+
+
+def test_another_profiles_sessions_never_match(tmp_path):
+    root = tmp_path / "root"
+    bot = root / "profiles" / "bot"
+    write_run(root, "j1", "2026-10-26_08-01-12", agent_run(response="here"))
+    write_run(bot, "j1", "2026-10-26_08-01-12", agent_run(response="bot"))
+    cron_sessions(bot, ("cron_j1_20261026_080100", at("2026-10-26 08:01:01"), at("2026-10-26 08:01:11"), "cron_complete"))
+    runs = {r["bot"]: r for r in cron.inbox(list(watcher.profile_homes(root)), cron.Follow({}, default="quiet"))}
+    assert runs["bot"]["session"] == "cron_j1_20261026_080100"
+    assert "session" not in runs["default"]

@@ -1,6 +1,6 @@
 name: herald-push
 label: Kyllene push
-version: 0.5.2
+version: 0.5.3
 manifest_version: 2
 requires_hermes: ">=0.21.5"
 description: >
