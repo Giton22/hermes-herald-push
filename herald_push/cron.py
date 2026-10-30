@@ -590,7 +590,8 @@ def inbox(homes: Iterable[Tuple[str, Path]], follow: Follow, limit: int = 50, be
 
 
 def read(homes: Iterable[Tuple[str, Path]], profile: str, job_id: str, run: str) -> Optional[dict]:
-    """One run in full (up to MAX_TEXT), or None when there's no such run or it stayed silent."""
+    """One run in full, or None when there's no such run or it stayed silent. A text over MAX_TEXT is cut, and
+    the run says ``truncated`` so the phone can say what it shows (or hands on) isn't the whole report."""
     if not (PROFILE_RE.match(profile) and JOB_ID_RE.match(job_id) and RUN_RE.match(run)):
         return None
     for name, home in homes:
@@ -601,5 +602,8 @@ def read(homes: Iterable[Tuple[str, Path]], profile: str, job_id: str, run: str)
         found = read_run(profile, job_id, path, zone) if path.is_file() else None
         if found is None:
             return None
-        return as_item(with_sessions([found], home, path.parent, zone)[0], MAX_TEXT)
+        item = as_item(with_sessions([found], home, path.parent, zone)[0], MAX_TEXT)
+        if len(found.text) > MAX_TEXT:
+            item["truncated"] = True
+        return item
     return None

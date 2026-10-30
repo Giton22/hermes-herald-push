@@ -712,3 +712,15 @@ def test_inbox_and_read_replies_always_say_the_session_null_when_none(tmp_path, 
     write_run(root, "j1", "2026-10-26_22-01-12", agent_run(response="pushed"))
     assert w.poll_cron(store.devices()) == 1
     assert "session" not in sent[0]
+
+
+def test_a_run_cut_to_size_says_so_when_read_in_full(tmp_path):
+    home = tmp_path / "home"
+    write_run(home, "j1", "2026-10-26_08-01-12", agent_run(response="x" * (cron.MAX_TEXT + 10)))
+    write_run(home, "j1", "2026-10-26_09-01-12", agent_run(response="y" * cron.MAX_TEXT))
+    cut = cron.read([("default", home)], "default", "j1", "2026-10-26_08-01-12")
+    assert cut["truncated"] is True and cut["text"].endswith("…") and len(cut["text"]) == cron.MAX_TEXT
+    whole = cron.read([("default", home)], "default", "j1", "2026-10-26_09-01-12")
+    assert "truncated" not in whole and whole["text"] == "y" * cron.MAX_TEXT
+    # The Inbox's rows are only the start of each run, cut by design: no flag there.
+    assert all("truncated" not in r for r in cron.inbox([("default", home)], cron.Follow({"j1": "quiet"})))
