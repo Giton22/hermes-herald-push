@@ -48,7 +48,8 @@ Finished cron runs for Kyllene's Inbox, for the jobs a phone follows.
   characters, like a bot message). Kyllene fetches the whole run over the direct connection.
 - **The Inbox.** `cron inbox` lists the runs a phone follows (and every failure, when it asked), newest first,
   each with the start of its text; `limit` and `before` page back. `cron read` gives one run in full (`bot`,
-  `job`, `run`, up to 48 KB; a longer one is cut and says `"truncated": true`, 0.5.3). Both read the same output files, so they work for every profile.
+  `job`, `run`, up to 48 KB; a longer one is cut and says `"truncated": true`, 0.5.3). Both read the same
+  output files, so they work for every profile.
 - **The run's session (0.5.3).** Runs name the session they ran in, so Kyllene can open it: `session` on the
   `cron_run` push, each `cron inbox` row and the `cron read` reply, from the profile's `state.db` (read-only),
   a compressed session followed to its continuation. A run with no session (a gate that kept the agent asleep,

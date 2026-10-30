@@ -320,11 +320,18 @@ def zone_of(profile: str, home: Path) -> Optional[tzinfo]:
         return None
 
 
-def run_time(run: str, zone: Optional[tzinfo] = None) -> float:
+def run_time(run: str, zone: Optional[tzinfo] = None, fold: int = 0) -> float:
     """When a run started, from its name on its scheduler's clock: not the file's mtime, which a copy or a
-    restored backup resets."""
-    started = datetime.strptime(run, "%Y-%m-%d_%H-%M-%S")
-    return started.replace(tzinfo=zone).timestamp() if zone is not None else time.mktime(started.timetuple())
+    restored backup resets. A name in the hour clocks go back over is read as its first pass (``fold`` 0),
+    unless asked for the second."""
+    started = datetime.strptime(run, "%Y-%m-%d_%H-%M-%S").replace(tzinfo=zone, fold=fold)
+    return started.timestamp()
+
+
+def run_times(run: str, zone: Optional[tzinfo] = None) -> Tuple[float, ...]:
+    """Every time a run's name can mean: one, or two in the hour clocks go back over (the name has no offset)."""
+    first, second = run_time(run, zone), run_time(run, zone, fold=1)
+    return (first,) if first == second else (first, second)
 
 
 def read_run(profile: str, job_id: str, path: Path, zone: Optional[tzinfo] = None) -> Optional[Run]:
@@ -450,20 +457,26 @@ def run_sessions(home: Path, job_id: str, runs: Iterable[str], zone: Optional[tz
             # Sessions are sorted by start, so each run's latest is found by bisection, not a scan of them all.
             starts = [s[0] for s in sessions]
             previous: Optional[float] = None
+            claimed = set()
             for run in sorted(runs):
-                at = run_time(run, zone)
-                latest = bisect_right(starts, at + SESSION_SLACK) - 1
-                after, previous = previous, at
-                if latest < 0 or (after is not None and starts[latest] <= after):
-                    continue
-                _, ended, session_id, reason = sessions[latest]
-                if reason == "compression":
-                    session_id = _compression_tip(home, conn, session_id)
-                    row = conn.execute("SELECT ended_at, end_reason FROM sessions WHERE id = ?",
-                                       (session_id,)).fetchone()
-                    ended, reason = (row[0], row[1] or "") if row else (None, "")
-                if _ended_with(at, ended, reason, now):
-                    found[run] = session_id
+                # A name in the hour clocks go back over can mean either pass: the session that ended as
+                # either was saved is the run's. The run before is bounded by its earlier reading.
+                times = run_times(run, zone)
+                after, previous = previous, times[0]
+                for at in times:
+                    latest = bisect_right(starts, at + SESSION_SLACK) - 1
+                    if latest < 0 or (after is not None and starts[latest] <= after):
+                        continue
+                    _, ended, session_id, reason = sessions[latest]
+                    if reason == "compression":
+                        session_id = _compression_tip(home, conn, session_id)
+                        row = conn.execute("SELECT ended_at, end_reason FROM sessions WHERE id = ?",
+                                           (session_id,)).fetchone()
+                        ended, reason = (row[0], row[1] or "") if row else (None, "")
+                    if session_id not in claimed and _ended_with(at, ended, reason, now):
+                        found[run] = session_id
+                        claimed.add(session_id)
+                        break
         finally:
             conn.close()
     except (sqlite3.Error, ValueError):

@@ -724,3 +724,29 @@ def test_a_run_cut_to_size_says_so_when_read_in_full(tmp_path):
     assert "truncated" not in whole and whole["text"] == "y" * cron.MAX_TEXT
     # The Inbox's rows are only the start of each run, cut by design: no flag there.
     assert all("truncated" not in r for r in cron.inbox([("default", home)], cron.Follow({"j1": "quiet"})))
+
+
+def test_a_run_in_the_hour_clocks_go_back_finds_its_session_on_either_pass(tmp_path, monkeypatch):
+    from datetime import timedelta, timezone
+    monkeypatch.delenv("HERMES_TIMEZONE", raising=False)
+    home = tmp_path / "home"
+    (home / "cron").mkdir(parents=True)
+    (home / "config.yaml").write_text("timezone: Europe/Vilnius\n")
+    zone = cron.zone_of("default", home)
+    # Vilnius, 2026-10-25: 04:00 summer time became 03:00 winter time, so 03:00-03:59 came twice.
+    utc = lambda h, m, s=0: datetime(2026, 10, 25, h, m, s, tzinfo=timezone.utc)
+    assert cron.run_times("2026-10-25_03-30-00", zone) == (utc(0, 30).timestamp(), utc(1, 30).timestamp())
+    # One job ran on each pass; their names can't say which.
+    write_run(home, "summer", "2026-10-25_03-30-00", agent_run(response="first pass"))
+    write_run(home, "winter", "2026-10-25_03-30-00", agent_run(response="second pass"))
+    cron_sessions(home, ("cron_summer_20261025_032900", utc(0, 29), utc(0, 29, 50), "cron_complete"),
+                  ("cron_winter_20261025_032900", utc(1, 29), utc(1, 29, 50), "cron_complete"))
+    assert cron.read([("default", home)], "default", "summer", "2026-10-25_03-30-00")["session"] == \
+        "cron_summer_20261025_032900"
+    assert cron.read([("default", home)], "default", "winter", "2026-10-25_03-30-00")["session"] == \
+        "cron_winter_20261025_032900"
+    # Twice in that hour: the second pass's run (03:20 winter) sorts before the first's (03:50 summer).
+    cron_sessions(home, ("cron_both_20261025_034900", utc(0, 49), utc(0, 49, 50), "cron_complete"),
+                  ("cron_both_20261025_031900", utc(1, 19), utc(1, 19, 50), "cron_complete"))
+    assert cron.run_sessions(home, "both", ["2026-10-25_03-50-00", "2026-10-25_03-20-00"], zone) == {
+        "2026-10-25_03-50-00": "cron_both_20261025_034900", "2026-10-25_03-20-00": "cron_both_20261025_031900"}
