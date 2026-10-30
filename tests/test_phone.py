@@ -511,6 +511,8 @@ def test_a_screen_takes_a2ui_messages_and_waits_for_a_tap():
     for word in ("Image", "Video", "AudioPlayer", "List", "Modal", "openUrl", "primaryColor", "deleteSurface"):
         assert word in description
     assert "aren't shown" not in description
+    # Updates are for the same task: a new request gets its own screen under the new reply.
+    assert "new request" in description and "new request" in phone.SCREEN_HINT
     assert '"version":"v0.9"' in description and '"root"' in description
     # A fixed id would be copied into every call.
     assert "pick-1" not in description

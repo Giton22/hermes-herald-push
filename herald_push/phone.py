@@ -93,10 +93,12 @@ _SCREEN = (
     "mutuallyExclusive or multipleSelection}, Slider {label, min, max, value}, DateTimeInput {label, value, "
     'enableDate, enableTime}. Bind a form field to the data with value: {"path":"/name"}. Fields and buttons take '
     'checks: [{"call":"required","args":{"value":{"path":"/name"}},"message":"..."}] (also email, regex, length, '
-    "numeric); a button with a failing check can't be tapped. Pictures and media load from http(s) URLs only. To "
-    "change a screen you showed in this chat (progress, the next step), call again with only updateComponents, "
-    "updateDataModel or deleteSurface for its surfaceId, no createSurface: it changes in place, and what the user "
-    "typed stays unless your update replaces that data."
+    "numeric); a button with a failing check can't be tapped. Pictures and media load from http(s) URLs only. "
+    "Within one task, to change the screen you just showed (progress in this turn, or the next step after the user "
+    "tapped it), call again with only updateComponents, updateDataModel or deleteSurface for its surfaceId, no "
+    "createSurface: it changes in place, and what the user typed stays unless your update replaces that data. A "
+    "new request from the user gets a new screen with a new surfaceId: an update changes the old card where it "
+    "is, higher up in the chat, not under your new reply."
 )
 
 # The agent rings the user's own phone. It never takes a number: the phone it rings is the user's own Herald.
@@ -685,9 +687,9 @@ SCREEN_HINT = (
     "The user's Kyllene app on Android can show a small screen under your reply with phone_show_ui. When you "
     "ask the user to pick between a few options, confirm or cancel something, or fill in a few values, call "
     "phone_show_ui for it instead of listing the choices in text or writing an HTML page, and still say the "
-    "question in your reply. Not for answers, long content or anything to read. To show progress or the next "
-    "step, update the screen you showed rather than drawing a new one. If the call says the user can't see it, "
-    "ask in words."
+    "question in your reply. Not for answers, long content or anything to read. For progress or the next step "
+    "of the same task, update that screen; for a new request, show a new one. If the call says the user can't "
+    "see it, ask in words."
 )
 
 
