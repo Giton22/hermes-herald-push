@@ -4,6 +4,8 @@ Hermes writes every finished run of a job to ``<home>/cron/output/<job_id>/<YYYY
 the job delivers to (Telegram, local, a Bot Chat). The watcher reads those files, never the jobs' own delivery,
 so following a job here changes nothing about where else its output goes.
 
+Each run names the session it ran in (the profile's ``state.db``), so the phone can open that run's chat.
+
 A phone says which jobs it follows with ``/herald-push cron follow <json>``: per job ``notify`` (a notification)
 or ``quiet`` (into the Inbox only), plus ``failures`` for a notification when any job's run fails. Runs that
 stayed silent (``[SILENT]``, a script with no output) are never sent.
@@ -14,8 +16,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 import time
-from dataclasses import dataclass
+from bisect import bisect_right
+from dataclasses import dataclass, replace
 from datetime import datetime, tzinfo
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -43,6 +47,20 @@ MAX_LIST = 100
 # At most this many files are read for one page of the Inbox: 40 jobs' worth at the scheduler's default
 # retention, so it only binds where runs are kept forever.
 MAX_SCAN = 2000
+
+# A run's output is saved as soon as its session ends: one that ended longer before or after belongs to
+# another run.
+SESSION_END_WINDOW = 60.0
+# A session not ended yet is a run's own only while the run is this fresh: older, it's a run that crashed.
+OPEN_SECONDS = 10 * 60.0
+# Hermes' sweeps of dead sessions (``startup_orphan_reap``, ``ws_orphan_reap``) stamp the sweep's time as the
+# end, and its reaper of stale compression continuations ends them as ``orphaned_compression``.
+ORPHAN_REAP = "orphan_reap"
+ORPHANED_COMPRESSION = "orphaned_compression"
+# The scheduler names a run's session for the second it started; a run's file, for the second it was saved.
+SESSION_STAMP_RE = re.compile(r"^\d{8}_\d{6}$")
+# A run's name drops the fraction of its second, so its session may seem to start just after it.
+SESSION_SLACK = 2.0
 
 OK = "ok"
 FAILED = "failed"
@@ -147,6 +165,7 @@ class Run:
     status: str
     text: str
     at: float
+    session: Optional[str] = None
 
 
 _HEADER = re.compile(r"^# Cron Job: (.+)$", re.M)
@@ -301,11 +320,18 @@ def zone_of(profile: str, home: Path) -> Optional[tzinfo]:
         return None
 
 
-def run_time(run: str, zone: Optional[tzinfo] = None) -> float:
+def run_time(run: str, zone: Optional[tzinfo] = None, fold: int = 0) -> float:
     """When a run started, from its name on its scheduler's clock: not the file's mtime, which a copy or a
-    restored backup resets."""
-    started = datetime.strptime(run, "%Y-%m-%d_%H-%M-%S")
-    return started.replace(tzinfo=zone).timestamp() if zone is not None else time.mktime(started.timetuple())
+    restored backup resets. A name in the hour clocks go back over is read as its first pass (``fold`` 0),
+    unless asked for the second."""
+    started = datetime.strptime(run, "%Y-%m-%d_%H-%M-%S").replace(tzinfo=zone, fold=fold)
+    return started.timestamp()
+
+
+def run_times(run: str, zone: Optional[tzinfo] = None) -> Tuple[float, ...]:
+    """Every time a run's name can mean: one, or two in the hour clocks go back over (the name has no offset)."""
+    first, second = run_time(run, zone), run_time(run, zone, fold=1)
+    return (first,) if first == second else (first, second)
 
 
 def read_run(profile: str, job_id: str, path: Path, zone: Optional[tzinfo] = None) -> Optional[Run]:
@@ -320,6 +346,150 @@ def read_run(profile: str, job_id: str, path: Path, zone: Optional[tzinfo] = Non
         return None
     name, status, text = parsed
     return Run(profile, job_id, path.stem, name or job_id, status, _ANSI.sub("", text), at)
+
+
+def _job_sessions(conn: sqlite3.Connection, job_id: str) -> List[Tuple[float, Optional[float], str, str]]:
+    """The job's own cron sessions, oldest first: (started, ended, id, end reason). Ids are matched on their
+    exact prefix, not LIKE, so a job id with ``_`` in it can't take another job's sessions."""
+    prefix = f"cron_{job_id}_"
+    rows = conn.execute(
+        "SELECT id, started_at, ended_at, end_reason FROM sessions WHERE source = 'cron' AND substr(id, 1, ?) = ?",
+        (len(prefix), prefix),
+    ).fetchall()
+    found = [(float(started), None if ended is None else float(ended), sid, reason or "")
+             for sid, started, ended, reason in rows
+             if started is not None and SESSION_STAMP_RE.match(sid[len(prefix):])]
+    return sorted(found)
+
+
+def _compression_tip(home: Path, conn: sqlite3.Connection, session_id: str) -> str:
+    """The continuation a compressed session ended in: Hermes' own lineage rule, or where Hermes isn't
+    importable, the same rule read here: each step takes the compressed session's continuation, never a fork
+    of it (branch, delegate, reset, a tool's session), preferring one compressed in turn, then one still open,
+    then the latest active."""
+    try:
+        from hermes_state import SessionDB
+        db = SessionDB(db_path=home / "state.db", read_only=True)
+        try:
+            return db.get_compression_tip(session_id) or session_id
+        finally:
+            db.close()
+    except Exception:  # not importable, or a state.db it can't read
+        pass
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
+    config = "model_config" if "model_config" in columns else "NULL"
+    active = "last_activity_at" if "last_activity_at" in columns else "NULL"
+    said = ("(SELECT MAX(timestamp) FROM messages WHERE session_id = sessions.id)"
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages'").fetchone()
+            else "NULL")
+    seen = {session_id}
+    while True:
+        row = conn.execute("SELECT end_reason FROM sessions WHERE id = ?", (session_id,)).fetchone()
+        if not row or row[0] != "compression":
+            return session_id
+        children = conn.execute(
+            f"SELECT id, source, {config}, end_reason, ended_at, started_at, {active}, {said} FROM sessions"
+            " WHERE parent_session_id = ?", (session_id,)).fetchall()
+        live = [c for c in children if c[0] not in seen and _continues(c[1], c[2])]
+        if not live:
+            return session_id
+        # Hermes' order: a child compressed in turn, then one still open, then the latest active (its last
+        # activity or message, else its start), then the latest started, then the id.
+        live.sort(key=lambda c: c[0], reverse=True)
+        session_id = min(live, key=lambda c: (0 if c[3] == "compression" else 1 if c[4] is None else 2,
+                                              -(max(_epoch(c[6]), _epoch(c[7])) or _epoch(c[5])),
+                                              -_epoch(c[5])))[0]
+        seen.add(session_id)
+
+
+def _epoch(value: Optional[float]) -> float:
+    try:
+        return float(value) if value is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _continues(source: Optional[str], model_config: Optional[str]) -> bool:
+    """Whether a compressed session's child is its continuation, by Hermes' chain rule: not a tool's session,
+    nor a branch, delegate or reset forked from it (marked so in its model config)."""
+    if source == "tool":
+        return False
+    try:
+        marks = json.loads(model_config) if model_config else {}
+    except ValueError:
+        marks = {}
+    return not isinstance(marks, dict) or all(
+        marks.get(mark) is None for mark in ("_branched_from", "_delegate_from", "_reset_from"))
+
+
+def _ended_with(at: float, ended: Optional[float], reason: str, now: float) -> bool:
+    """Whether a session that ended at ``ended`` (for ``reason``) is the one a run saved at ``at`` ran in. The
+    scheduler ends a run's session, then saves its output: a session that ended well before or after the save,
+    or that a sweep closed long after it died, is another run's. One not ended yet is taken only for a run
+    saved just now, whose agent may still be finishing; an older one is a run that crashed and never ended."""
+    if reason.endswith(ORPHAN_REAP) or reason == ORPHANED_COMPRESSION:
+        return False
+    if ended is None:
+        return now - at <= OPEN_SECONDS
+    return abs(ended - at) <= SESSION_END_WINDOW
+
+
+def run_sessions(home: Path, job_id: str, runs: Iterable[str], zone: Optional[tzinfo] = None,
+                 now: Optional[float] = None) -> Dict[str, str]:
+    """The session each of a job's runs ran in, by run name, from the profile's ``state.db`` (read-only).
+
+    ``runs`` are the job's run names, every one kept, so each run is known by the one before it. A run's
+    session is the job's latest to start after the run before it finished and by the time this one's output
+    was saved; compression is followed to the continuation it ended in. That session must have ended within a
+    minute of the save, and not by a sweep of dead sessions. A run whose script gate kept the agent asleep, or
+    whose latest session belongs to a run that crashed, has no session, and none is given: no session is
+    better than another run's.
+    """
+    db_path = home / "state.db"
+    if not db_path.is_file():
+        return {}
+    now = time.time() if now is None else now
+    found: Dict[str, str] = {}
+    try:
+        conn = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True, timeout=2.0)
+        try:
+            sessions = _job_sessions(conn, job_id)
+            # Sessions are sorted by start, so each run's latest is found by bisection, not a scan of them all.
+            starts = [s[0] for s in sessions]
+            previous: Optional[float] = None
+            claimed = set()
+            for run in sorted(runs):
+                # A name in the hour clocks go back over can mean either pass: the session that ended as
+                # either was saved is the run's. The run before is bounded by its earlier reading.
+                times = run_times(run, zone)
+                after, previous = previous, times[0]
+                for at in times:
+                    latest = bisect_right(starts, at + SESSION_SLACK) - 1
+                    if latest < 0 or (after is not None and starts[latest] <= after):
+                        continue
+                    _, ended, session_id, reason = sessions[latest]
+                    if reason == "compression":
+                        session_id = _compression_tip(home, conn, session_id)
+                        row = conn.execute("SELECT ended_at, end_reason FROM sessions WHERE id = ?",
+                                           (session_id,)).fetchone()
+                        ended, reason = (row[0], row[1] or "") if row else (None, "")
+                    if session_id not in claimed and _ended_with(at, ended, reason, now):
+                        found[run] = session_id
+                        claimed.add(session_id)
+                        break
+        finally:
+            conn.close()
+    except (sqlite3.Error, ValueError):
+        return found
+    return found
+
+
+def with_sessions(runs: List[Run], home: Path, folder: Path, zone: Optional[tzinfo] = None) -> List[Run]:
+    """One job's runs, each naming the session it ran in where one is found."""
+    if not runs:
+        return runs
+    sessions = run_sessions(home, runs[0].job_id, (p.stem for p in runs_after(folder, "")), zone)
+    return [replace(run, session=sessions.get(run.run)) for run in runs]
 
 
 class CronWatcher:
@@ -341,6 +511,9 @@ class CronWatcher:
         homes = list(homes)
         for profile, job_id, folder in output_dirs(homes):
             key = f"cron:{profile}:{job_id}"
+            home = folder.parent.parent.parent
+            zone: Optional[tzinfo] = None
+            new: List[Run] = []
             if key not in marks:
                 marks[key] = newest_run(folder) if baseline else ""
                 changed = True
@@ -357,9 +530,11 @@ class CronWatcher:
                 changed = True
                 if age > STALE_SECONDS:
                     continue
-                run = read_run(profile, job_id, path, zone_of(profile, folder.parent.parent.parent))
+                zone = zone or zone_of(profile, home)
+                run = read_run(profile, job_id, path, zone)
                 if run is not None:
-                    found.append(run)
+                    new.append(run)
+            found.extend(with_sessions(new, home, folder, zone))
         # A deleted job's mark goes with it: only when its profile's output was there to look in, so a folder
         # that couldn't be read for a moment doesn't come back as a new job and send its runs again.
         outputs = {profile: home / "cron" / "output" for profile, home in homes}
@@ -377,8 +552,10 @@ def _clip(text: str, limit: int) -> str:
 
 
 def as_item(run: Run, limit: int) -> dict:
+    """A run as the Inbox and ``cron read`` give it. ``session`` is always there, null for a run with none, so
+    the phone can tell that from a plugin too old to say."""
     return {"bot": run.profile, "job": run.job_id, "run": run.run, "label": run.name, "status": run.status,
-            "at": int(run.at), "text": _clip(run.text, limit)}
+            "at": int(run.at), "text": _clip(run.text, limit), "session": run.session or None}
 
 
 def inbox(homes: Iterable[Tuple[str, Path]], follow: Follow, limit: int = 50, before: float = 0) -> List[dict]:
@@ -390,12 +567,14 @@ def inbox(homes: Iterable[Tuple[str, Path]], follow: Follow, limit: int = 50, be
     # keeps a job's last 50 runs by default; MAX_SCAN bounds a gateway that keeps them all).
     candidates: List[Tuple[float, str, str, bool, Path, Optional[tzinfo]]] = []
     zones: Dict[str, Optional[tzinfo]] = {}
+    folders: Dict[Tuple[str, str], Path] = {}
     for profile, job_id, folder in output_dirs(homes):
         followed = follow.follows(job_id)
         if not followed and not follow.failures:
             continue
         if profile not in zones:
             zones[profile] = zone_of(profile, folder.parent.parent.parent)
+        folders[(profile, job_id)] = folder
         for path in runs_after(folder, ""):
             try:
                 at = run_time(path.stem, zones[profile])
@@ -404,24 +583,40 @@ def inbox(homes: Iterable[Tuple[str, Path]], follow: Follow, limit: int = 50, be
             if not before or at < before:
                 candidates.append((at, profile, job_id, followed, path, zones[profile]))
     candidates.sort(key=lambda c: c[0], reverse=True)
-    found: List[dict] = []
+    found: List[Run] = []
     for at, profile, job_id, followed, path, zone in candidates[:MAX_SCAN]:
-        if len(found) >= limit and int(at) != found[-1]["at"]:
+        if len(found) >= limit and int(found[-1].at) != int(at):
             break
         run = read_run(profile, job_id, path, zone)
         if run is not None and (followed or run.status == FAILED):
-            found.append(as_item(run, LIST_TEXT))
-    return found
+            found.append(run)
+    # Each job's sessions are read once, for the runs of it that made the page.
+    sessions: Dict[Tuple[str, str], Dict[str, str]] = {}
+    for run in found:
+        key = (run.profile, run.job_id)
+        if key not in sessions:
+            folder = folders[key]
+            sessions[key] = run_sessions(folder.parent.parent.parent, run.job_id,
+                                         (p.stem for p in runs_after(folder, "")), zones[run.profile])
+    return [as_item(replace(run, session=sessions[(run.profile, run.job_id)].get(run.run)), LIST_TEXT)
+            for run in found]
 
 
 def read(homes: Iterable[Tuple[str, Path]], profile: str, job_id: str, run: str) -> Optional[dict]:
-    """One run in full (up to MAX_TEXT), or None when there's no such run or it stayed silent."""
+    """One run in full, or None when there's no such run or it stayed silent. A text over MAX_TEXT is cut, and
+    the run says ``truncated`` so the phone can say what it shows (or hands on) isn't the whole report."""
     if not (PROFILE_RE.match(profile) and JOB_ID_RE.match(job_id) and RUN_RE.match(run)):
         return None
     for name, home in homes:
         if name != profile:
             continue
         path = home / "cron" / "output" / job_id / f"{run}.md"
-        found = read_run(profile, job_id, path, zone_of(profile, home)) if path.is_file() else None
-        return as_item(found, MAX_TEXT) if found else None
+        zone = zone_of(profile, home)
+        found = read_run(profile, job_id, path, zone) if path.is_file() else None
+        if found is None:
+            return None
+        item = as_item(with_sessions([found], home, path.parent, zone)[0], MAX_TEXT)
+        if len(found.text) > MAX_TEXT:
+            item["truncated"] = True
+        return item
     return None
