@@ -529,6 +529,39 @@ def test_a_compressed_run_names_the_continuation_it_ended_in(tmp_path):
     assert cron.read([("default", home)], "default", "j1", "2026-10-26_09-30-05")["session"] == "20261026_092500_ef34ab"
 
 
+def cron_admissions(home, *rows):
+    """The scheduler's admissions in state.db, as Hermes' unified runtime (0.22.3) books each agent job's run:
+    (request id, session id[, principal])."""
+    import sqlite3
+    conn = sqlite3.connect(home / "state.db")
+    conn.execute("CREATE TABLE IF NOT EXISTS session_admissions (seq INTEGER PRIMARY KEY AUTOINCREMENT,"
+                 " request_id TEXT NOT NULL, principal_id TEXT NOT NULL, target_session_id TEXT NOT NULL)")
+    for request, sid, *principal in rows:
+        conn.execute("INSERT INTO session_admissions (request_id, principal_id, target_session_id) VALUES (?, ?, ?)",
+                     (request, principal[0] if principal else "cron-owner", sid))
+    conn.commit()
+    conn.close()
+
+
+def test_a_run_of_the_unified_runtime_names_its_local_session(tmp_path):
+    home = tmp_path / "home"
+    write_run(home, "j1", "2026-10-26_09-01-14", agent_run(response="mine"))
+    mine, ambiguous, users = ("local-" + c * 64 for c in "abc")
+    # Since Hermes 0.22.3 an agent job's run keeps the runtime's id; only its admission names the job.
+    cron_sessions(home,
+                  (mine, at("2026-10-26 09:01:00"), at("2026-10-26 09:01:13"), "cron_complete"),
+                  (ambiguous, at("2026-10-26 09:01:01"), at("2026-10-26 09:01:13"), "cron_complete"),
+                  (users, at("2026-10-26 09:01:02"), at("2026-10-26 09:01:13"), "cron_complete"))
+    cron_admissions(home,
+                    ("cron:j1:4be0a7c19d2f", mine),
+                    # Job "j1:x"'s run, not j1's; and a request of j1's from someone other than the scheduler.
+                    ("cron:j1:x:51ac", ambiguous),
+                    ("cron:j1:77aa", users, "user-1"))
+    assert cron.read([("default", home)], "default", "j1", "2026-10-26_09-01-14")["session"] == mine
+    runs = cron.inbox([("default", home)], cron.Follow({"j1": "quiet"}))
+    assert [r["session"] for r in runs] == [mine]
+
+
 def test_a_run_whose_gate_kept_the_agent_asleep_has_no_session(tmp_path):
     home = tmp_path / "home"
     write_run(home, "gate", "2026-10-23_23-00-32", agent_run(response="woke"))

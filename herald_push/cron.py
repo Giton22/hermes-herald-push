@@ -61,6 +61,10 @@ ORPHANED_COMPRESSION = "orphaned_compression"
 SESSION_STAMP_RE = re.compile(r"^\d{8}_\d{6}$")
 # A run's name drops the fraction of its second, so its session may seem to start just after it.
 SESSION_SLACK = 2.0
+# Hermes' unified runtime (0.22.3) admits each agent job's run as this principal, under ``cron:<job>:<execution>``
+# (``hermes_state_keys.CRON_PRINCIPAL_ID`` and ``cron_request_id``).
+CRON_PRINCIPAL = "cron-owner"
+CRON_REQUEST_PREFIX = "cron:"
 
 OK = "ok"
 FAILED = "failed"
@@ -350,7 +354,12 @@ def read_run(profile: str, job_id: str, path: Path, zone: Optional[tzinfo] = Non
 
 def _job_sessions(conn: sqlite3.Connection, job_id: str) -> List[Tuple[float, Optional[float], str, str]]:
     """The job's own cron sessions, oldest first: (started, ended, id, end reason). Ids are matched on their
-    exact prefix, not LIKE, so a job id with ``_`` in it can't take another job's sessions."""
+    exact prefix, not LIKE, so a job id with ``_`` in it can't take another job's sessions.
+
+    Hermes before its unified runtime (0.22.3) named a run's session ``cron_<job>_<stamp>``. Since then an
+    agent job's run keeps the runtime's ``local-…`` id, and the scheduler's admission of it, under
+    ``cron:<job>:<execution>`` in ``session_admissions``, says which job it is: Hermes' own run history
+    (``list_cron_job_runs``) reads both the same way."""
     prefix = f"cron_{job_id}_"
     rows = conn.execute(
         "SELECT id, started_at, ended_at, end_reason FROM sessions WHERE source = 'cron' AND substr(id, 1, ?) = ?",
@@ -359,7 +368,19 @@ def _job_sessions(conn: sqlite3.Connection, job_id: str) -> List[Tuple[float, Op
     found = [(float(started), None if ended is None else float(ended), sid, reason or "")
              for sid, started, ended, reason in rows
              if started is not None and SESSION_STAMP_RE.match(sid[len(prefix):])]
-    return sorted(found)
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_admissions'").fetchone():
+        request = f"{CRON_REQUEST_PREFIX}{job_id}:"
+        # The execution id after the job's holds no ``:``, so job ``a`` can't take job ``a:b``'s runs.
+        admitted = conn.execute(
+            "SELECT DISTINCT s.id, s.started_at, s.ended_at, s.end_reason FROM session_admissions a"
+            " JOIN sessions s ON s.id = a.target_session_id"
+            f" WHERE a.principal_id = '{CRON_PRINCIPAL}' AND substr(a.request_id, 1, ?) = ?"
+            " AND length(a.request_id) > ? AND instr(substr(a.request_id, ? + 1), ':') = 0",
+            (len(request), request, len(request), len(request)),
+        ).fetchall()
+        found += [(float(started), None if ended is None else float(ended), sid, reason or "")
+                  for sid, started, ended, reason in admitted if started is not None]
+    return sorted(set(found))
 
 
 def _compression_tip(home: Path, conn: sqlite3.Connection, session_id: str) -> str:

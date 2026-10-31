@@ -52,7 +52,8 @@ Finished cron runs for Kyllene's Inbox, for the jobs a phone follows.
   output files, so they work for every profile.
 - **The run's session (0.5.3).** Runs name the session they ran in, so Kyllene can open it: `session` on the
   `cron_run` push, each `cron inbox` row and the `cron read` reply, from the profile's `state.db` (read-only),
-  a compressed session followed to its continuation. A run with no session (a gate that kept the agent asleep,
+  a compressed session followed to its continuation. From Hermes 0.22.3 an agent job's run keeps the runtime's
+  `local-…` id, found through the scheduler's admission of it. A run with no session (a gate that kept the agent asleep,
   or one whose session never ended or was swept up as an orphan) has none: the push leaves the field out, while
   `cron inbox` rows and the `cron read` reply always carry `session`, null when there is none.
 - **What isn't.** Runs that stayed silent (`[SILENT]`, a script with no output, a gate that didn't wake the
