@@ -48,7 +48,14 @@ Finished cron runs for Kyllene's Inbox, for the jobs a phone follows.
   characters, like a bot message). Kyllene fetches the whole run over the direct connection.
 - **The Inbox.** `cron inbox` lists the runs a phone follows (and every failure, when it asked), newest first,
   each with the start of its text; `limit` and `before` page back. `cron read` gives one run in full (`bot`,
-  `job`, `run`, up to 48 KB). Both read the same output files, so they work for every profile.
+  `job`, `run`, up to 48 KB; a longer one is cut and says `"truncated": true`, 0.7.2). Both read the same
+  output files, so they work for every profile.
+- **The run's session (0.7.2).** Runs name the session they ran in, so Kyllene can open it: `session` on the
+  `cron_run` push, each `cron inbox` row and the `cron read` reply, from the profile's `state.db` (read-only),
+  a compressed session followed to its continuation. From Hermes 0.22.3 an agent job's run keeps the runtime's
+  `local-…` id, found through the scheduler's admission of it. A run with no session (a gate that kept the agent asleep,
+  or one whose session never ended or was swept up as an orphan) has none: the push leaves the field out, while
+  `cron inbox` rows and the `cron read` reply always carry `session`, null when there is none.
 - **What isn't.** Runs that stayed silent (`[SILENT]`, a script with no output, a gate that didn't wake the
   agent), a job's history when it is first seen, and runs older than 30 minutes when found (after a restart).
 
