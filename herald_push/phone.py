@@ -60,6 +60,46 @@ READ_TIMEOUT = 30
 CONFIRM_TIMEOUT = 120
 # A call rings 45 seconds on the phone; the rest is for the push to get there and the answer to come back.
 CALL_TIMEOUT = 75
+# A screen in the chat waits for the user to look and tap.
+SCREEN_TIMEOUT = 300
+MAX_SCREEN_MESSAGES = 100
+SHOW_UI_TOOL = "phone_show_ui"
+
+_SCREEN = (
+    "Use this, not a list in text or an HTML page, when you ask the user to pick between options, confirm, or "
+    "fill in a few values. "
+    "Shows the user a small screen under your reply in Kyllene on their Android phone, made of A2UI v0.9 messages, "
+    "and (with wait, the default) waits up to 5 minutes for them to tap a button. Only for a chat the user has "
+    "open in Kyllene on Android: from anywhere else it fails, so ask in words then. For choices, "
+    "confirmations and short forms; keep it small and still say the question in your reply. Returns {event, "
+    "surface_id, component_id, context, data} for the button tapped (data: the form's values, when createSurface "
+    "had sendDataModel true), {shown: true} with wait false (then a tap comes later as the user's next message, "
+    "starting \"Tapped\"), or an error to fix and try again. Messages, in order "
+    "(SURFACE is an id you make up, new for each screen): "
+    '{"version":"v0.9","createSurface":{"surfaceId":"SURFACE","catalogId":'
+    '"https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json","sendDataModel":true}} (optionally '
+    '"theme":{"primaryColor":"#RRGGBB"}), then '
+    '{"version":"v0.9","updateComponents":{"surfaceId":"SURFACE","components":[...]}} with one component whose id '
+    'is "root"; optionally {"version":"v0.9","updateDataModel":{"surfaceId":"SURFACE","path":"/","value":{...}}} '
+    "for starting values. Components are a flat list, each {id, component, ...props}, children named by id: "
+    "Column and Row {children:[ids], justify, align}, List {children, direction: vertical or horizontal}, Card "
+    "{child}, Divider, Modal {trigger: a Button's id, content}, Tabs {tabs:[{title, child}]}, "
+    "Text {text, variant: h1-h5, body or caption}, Icon {name}, Image {url, fit, variant: icon, avatar, "
+    "smallFeature, mediumFeature, largeFeature or header}, Video {url}, AudioPlayer {url, description}, "
+    "Button {child: a Text's id, variant: default, primary (the main action) or borderless, action: "
+    '{"event":{"name":"...","context":{...}}} to answer, or {"functionCall":{"call":"openUrl","args":{"url":'
+    '"https://..."}}} to open a link}, TextField {label, value, variant: shortText, longText, number or obscured}, '
+    "CheckBox {label, value}, ChoicePicker {label, options: [{label, value}], value: a list, variant: "
+    "mutuallyExclusive or multipleSelection}, Slider {label, min, max, value}, DateTimeInput {label, value, "
+    'enableDate, enableTime}. Bind a form field to the data with value: {"path":"/name"}. Fields and buttons take '
+    'checks: [{"call":"required","args":{"value":{"path":"/name"}},"message":"..."}] (also email, regex, length, '
+    "numeric); a button with a failing check can't be tapped. Pictures and media load from http(s) URLs only. "
+    "Within one task, to change the screen you just showed (progress in this turn, or the next step after the user "
+    "tapped it), call again with only updateComponents, updateDataModel or deleteSurface for its surfaceId, no "
+    "createSurface: it changes in place, and what the user typed stays unless your update replaces that data. A "
+    "new request from the user gets a new screen with a new surfaceId: an update changes the old card where it "
+    "is, higher up in the chat, not under your new reply."
+)
 
 # The agent rings the user's own phone. It never takes a number: the phone it rings is the user's own Herald.
 CALL_TOOL = "phone_call_me"
@@ -226,6 +266,14 @@ TOOLS: Dict[str, tuple] = {
             "details": {"type": "string", "maxLength": MAX_DETAILS,
                         "description": "Optional background for the call: what happened, deadlines, the options."},
         }, ["reason"]), CALL_TIMEOUT, "📞"),
+    SHOW_UI_TOOL: (_schema(
+        SHOW_UI_TOOL,
+        _SCREEN,
+        {
+            "messages": {"type": "array", "minItems": 1, "maxItems": MAX_SCREEN_MESSAGES,
+                         "items": {"type": "object"}, "description": "A2UI messages, in the order they apply."},
+            "wait": {"type": "boolean", "description": "Wait for a tap (default true); false only shows it."},
+        }, ["messages"]), SCREEN_TIMEOUT, "🧩"),
 }
 
 
@@ -445,6 +493,9 @@ class Phones:
         if device_id is None:
             return _error(refusal or "No phone offers this tool any more.")
         timeout = TOOLS[tool][1]
+        if tool == SHOW_UI_TOOL and isinstance(args, dict) and args.get("wait") is False:
+            # Only shown: Kyllene answers as soon as it draws the screen, so a phone that's away isn't waited for.
+            timeout = READ_TIMEOUT
         request_id = uuid.uuid4().hex
         now = self.clock()
         request = {"id": request_id, "device_id": device_id, "tool": tool, "args": args if isinstance(args, dict) else {},
@@ -634,6 +685,51 @@ _watch_lock = threading.Lock()
 _watch: Optional[_Watch] = None
 
 
+SCREEN_HINT_ID = "kyllene-screens"
+SCREEN_HINT = (
+    "The user's Kyllene app on Android can show a small screen under your reply with phone_show_ui. When you "
+    "ask the user to pick between a few options, confirm or cancel something, or fill in a few values, call "
+    "phone_show_ui for it instead of listing the choices in text or writing an HTML page, and still say the "
+    "question in your reply. Not for answers, long content or anything to read. For progress or the next step "
+    "of the same task, update that screen; for a new request, show a new one. If the call says the user can't "
+    "see it, ask in words."
+)
+
+
+def messaging_platform(platform: str) -> bool:
+    """Whether a chat's [platform] is a messaging one, as Hermes tells them apart; unknown counts as no."""
+    ident = str(platform or "").strip().lower()
+    if not ident:
+        return False
+    try:
+        from gateway.session_context import NON_MESSAGING_SESSION_SURFACES
+    except ImportError:
+        return False
+    return ident not in NON_MESSAGING_SESSION_SURFACES
+
+
+def screen_hint(phones: Phones, info=None) -> str:
+    """When to draw a screen, for a new chat's instructions: only while a phone has the tool on, as the tool,
+    and not on a messaging platform. [info] is the chat's, from Hermes: its platform is known when the
+    instructions are built, before any turn has started."""
+    if not phones.offered(SHOW_UI_TOOL):
+        return ""
+    if messaging_platform((info or {}).get("platform", "")) or on_messaging_platform():
+        return ""
+    return SCREEN_HINT
+
+
+def register_screen_hint(ctx, phones: Phones) -> None:
+    """A tool's description alone rarely makes the agent pick it over text: the chat's instructions say when."""
+    register = getattr(ctx, "register_system_prompt_section", None)
+    if register is None:  # older Hermes: the tool's description is all the agent reads
+        return
+    try:
+        register(SCREEN_HINT_ID, lambda info: screen_hint(phones, info))
+    except (TypeError, ValueError) as e:
+        log.warning("herald-push: no screen hint in the chat's instructions: %s", e)
+
+
 def register_tools(ctx, phones: Phones) -> None:
     """Every phone tool, each offered only while a phone has it on."""
     global _watch
@@ -660,6 +756,8 @@ def register_tools(ctx, phones: Phones) -> None:
 
         ctx.register_tool(name=name, toolset=TOOLSET, schema=schema, handler=handler,
                           check_fn=no_cache_check_fn(check), emoji=emoji)
+
+    register_screen_hint(ctx, phones)
 
     with _watch_lock:
         if _watch is None:

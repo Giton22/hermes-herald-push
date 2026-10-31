@@ -56,7 +56,8 @@ Finished cron runs for Kyllene's Inbox, for the jobs a phone follows.
 
 Agent tools that run on the phone, in the `herald_phone` toolset: `phone_battery`, `phone_network`,
 `phone_sound`, `phone_alarm`, `phone_screen_time`, `phone_open`, `phone_clipboard`, `phone_location`,
-`phone_geofence`, `phone_calendar`, `phone_contacts`, `phone_health` and `phone_call_me` (0.5.0).
+`phone_geofence`, `phone_calendar`, `phone_contacts`, `phone_health`, `phone_call_me` (0.5.0) and
+`phone_show_ui` (0.6.0, an experiment).
 
 - **Off until the user turns them on.** Each tool has its own switch in Kyllene (Settings → Phone tools). Kyllene
   tells the gateway which ones are on with `/herald-push phone tools`, and a tool no phone has on is not
@@ -90,6 +91,11 @@ Agent tools that run on the phone, in the `herald_phone` toolset: `phone_battery
   to reach the user another way. The push carries the reason and details (end-to-end encrypted, like every
   push), so the phone rings even when Kyllene isn't connected; the answer comes back over the socket. It works
   from scheduled jobs too, for "call me at 7:30".
+- **A screen in the chat (experiment).** `phone_show_ui(messages, wait?)` takes [A2UI](https://a2ui.org) v0.9
+  messages, and Kyllene on Android draws them under the reply with the A2UI Basic Catalog. With `wait` (the
+  default) the tool waits up to 5 minutes and returns the button the user tapped, its context and the form's
+  values; messages that aren't A2UI come back as an error the agent can fix. The screen is drawn from the call's
+  own arguments, so it stays in the chat's history.
 
 ## Tests
 
