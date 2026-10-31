@@ -70,7 +70,7 @@ _SCREEN = (
     "fill in a few values. "
     "Shows the user a small screen under your reply in Kyllene on their Android phone, made of A2UI v0.9 messages, "
     "and (with wait, the default) waits up to 5 minutes for them to tap a button. Only for a chat the user has "
-    "open in Kyllene on Android: from anywhere else it fails within seconds, so ask in words then. For choices, "
+    "open in Kyllene on Android: from anywhere else it fails, so ask in words then. For choices, "
     "confirmations and short forms; keep it small and still say the question in your reply. Returns {event, "
     "surface_id, component_id, context, data} for the button tapped (data: the form's values, when createSurface "
     "had sendDataModel true), {shown: true} with wait false (then a tap comes later as the user's next message, "
@@ -493,6 +493,9 @@ class Phones:
         if device_id is None:
             return _error(refusal or "No phone offers this tool any more.")
         timeout = TOOLS[tool][1]
+        if tool == SHOW_UI_TOOL and isinstance(args, dict) and args.get("wait") is False:
+            # Only shown: Kyllene answers as soon as it draws the screen, so a phone that's away isn't waited for.
+            timeout = READ_TIMEOUT
         request_id = uuid.uuid4().hex
         now = self.clock()
         request = {"id": request_id, "device_id": device_id, "tool": tool, "args": args if isinstance(args, dict) else {},

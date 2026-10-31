@@ -518,6 +518,31 @@ def test_a_screen_takes_a2ui_messages_and_waits_for_a_tap():
     assert "pick-1" not in description
 
 
+def test_a_screen_only_shown_waits_no_longer_than_a_read(tmp_path):
+    phones = Phones(Store(tmp_path))
+    phones.report(PHONE, KEY, "Pixel", ["phone_show_ui"])
+    waits = []
+
+    def run():
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            waiting = phones.pending(PHONE)
+            if waiting:
+                waits.append(round(waiting[0]["expires"] - time.time()))
+                phones.answer(PHONE, waiting[0]["id"], {"shown": True}, None)
+                return
+            time.sleep(0.02)
+
+    for wait in (False, True):
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        assert json.loads(phones.call("phone_show_ui", {"messages": [], "wait": wait})) == {"shown": True}
+        thread.join()
+    # Expiry is kept in whole seconds.
+    assert phone.READ_TIMEOUT - 2 <= waits[0] <= phone.READ_TIMEOUT
+    assert phone.SCREEN_TIMEOUT - 2 <= waits[1] <= phone.SCREEN_TIMEOUT
+
+
 def test_a_call_takes_no_number_only_a_reason():
     schema = phone.TOOLS[phone.CALL_TOOL][0]["parameters"]
     assert set(schema["properties"]) == {"reason", "details"} and schema["required"] == ["reason"]
