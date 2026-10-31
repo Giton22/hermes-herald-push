@@ -1,7 +1,9 @@
 import json
 import os
+import sys
 import threading
 import time
+import types
 
 import pytest
 
@@ -414,6 +416,45 @@ def test_tools_are_offered_only_while_a_phone_has_them_on(tmp_path, ctx):
     assert json.loads(handler({}, session_id="s", task_id="t", user_task="u")) == {"level": 5}
 
 
+def test_a_new_chat_is_told_when_to_draw_a_screen_only_while_a_phone_can(tmp_path, ctx, monkeypatch):
+    sections = {}
+
+    def register(id, content, **_kw):
+        # As Hermes does it: an id once, and text or a callable of the session's info, frozen into each new chat.
+        if id in sections:
+            raise ValueError(f"system prompt section {id!r} is already registered")
+        sections[id] = content
+
+    ctx.register_system_prompt_section = register
+    phones = Phones(Store(tmp_path))
+    phone.register_tools(ctx, phones)
+    render = sections[phone.SCREEN_HINT_ID]
+    info = {"session_id": "s", "model": "m", "provider": "p", "platform": "", "profile_name": "default", "cwd": ""}
+    assert render(info) == ""
+    phones.report(PHONE, KEY, "Pixel", [phone.SHOW_UI_TOOL])
+    assert phone.SHOW_UI_TOOL in render(info) and "HTML" in render(info)
+    # Fits Hermes's cap on one section, with room for others.
+    assert len(render(info)) < 1000
+    # A chat from a messaging platform is known by its info, before any turn sets the session's context.
+    gateway = types.ModuleType("gateway")
+    session_context = types.ModuleType("gateway.session_context")
+    session_context.NON_MESSAGING_SESSION_SURFACES = frozenset({"cli", "tui", "api_server"})
+    monkeypatch.setitem(sys.modules, "gateway", gateway)
+    monkeypatch.setitem(sys.modules, "gateway.session_context", session_context)
+    assert render({**info, "platform": "telegram"}) == ""
+    assert render({**info, "platform": "tui"}) == phone.SCREEN_HINT
+    monkeypatch.setattr(phone, "on_messaging_platform", lambda: True)
+    assert render(info) == ""
+    # Registered again in the same process (a reinstall), it's refused, and the tools still are there.
+    phone.register_tools(ctx, phones)
+    assert phone.SHOW_UI_TOOL in ctx.tools
+
+
+def test_an_older_hermes_without_prompt_sections_still_gets_the_tools(tmp_path, ctx):
+    phone.register_tools(ctx, Phones(Store(tmp_path)))
+    assert phone.SHOW_UI_TOOL in ctx.tools
+
+
 def test_the_handler_routes_by_the_turns_chat_connection(tmp_path, ctx, monkeypatch):
     monkeypatch.setattr(phone, "turn_connection", lambda: "sid-pixel")
     phones = Phones(Store(tmp_path))
@@ -454,7 +495,52 @@ def test_every_schema_is_a_closed_object():
     for name, (schema, timeout, _) in phone.TOOLS.items():
         assert schema["name"] == name and name.startswith("phone_")
         assert schema["parameters"]["additionalProperties"] is False
-        assert timeout in (phone.READ_TIMEOUT, phone.CONFIRM_TIMEOUT, phone.CALL_TIMEOUT)
+        assert timeout in (phone.READ_TIMEOUT, phone.CONFIRM_TIMEOUT, phone.CALL_TIMEOUT, phone.SCREEN_TIMEOUT)
+
+
+def test_a_screen_takes_a2ui_messages_and_waits_for_a_tap():
+    schema, timeout, _ = phone.TOOLS["phone_show_ui"]
+    params = schema["parameters"]
+    assert set(params["properties"]) == {"messages", "wait"} and params["required"] == ["messages"]
+    assert params["properties"]["messages"]["maxItems"] == phone.MAX_SCREEN_MESSAGES
+    assert timeout == phone.SCREEN_TIMEOUT
+    # What the agent is taught is what Kyllene's catalog draws.
+    description = schema["description"]
+    assert "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json" in description
+    # Kyllene draws pictures and media, and changes a screen in place.
+    for word in ("Image", "Video", "AudioPlayer", "List", "Modal", "openUrl", "primaryColor", "deleteSurface"):
+        assert word in description
+    assert "aren't shown" not in description
+    # Updates are for the same task: a new request gets its own screen under the new reply.
+    assert "new request" in description and "new request" in phone.SCREEN_HINT
+    assert '"version":"v0.9"' in description and '"root"' in description
+    # A fixed id would be copied into every call.
+    assert "pick-1" not in description
+
+
+def test_a_screen_only_shown_waits_no_longer_than_a_read(tmp_path):
+    phones = Phones(Store(tmp_path))
+    phones.report(PHONE, KEY, "Pixel", ["phone_show_ui"])
+    waits = []
+
+    def run():
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            waiting = phones.pending(PHONE)
+            if waiting:
+                waits.append(round(waiting[0]["expires"] - time.time()))
+                phones.answer(PHONE, waiting[0]["id"], {"shown": True}, None)
+                return
+            time.sleep(0.02)
+
+    for wait in (False, True):
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        assert json.loads(phones.call("phone_show_ui", {"messages": [], "wait": wait})) == {"shown": True}
+        thread.join()
+    # Expiry is kept in whole seconds.
+    assert phone.READ_TIMEOUT - 2 <= waits[0] <= phone.READ_TIMEOUT
+    assert phone.SCREEN_TIMEOUT - 2 <= waits[1] <= phone.SCREEN_TIMEOUT
 
 
 def test_a_call_takes_no_number_only_a_reason():
