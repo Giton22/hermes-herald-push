@@ -370,13 +370,17 @@ def _job_sessions(conn: sqlite3.Connection, job_id: str) -> List[Tuple[float, Op
              if started is not None and SESSION_STAMP_RE.match(sid[len(prefix):])]
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_admissions'").fetchone():
         request = f"{CRON_REQUEST_PREFIX}{job_id}:"
-        # The execution id after the job's holds no ``:``, so job ``a`` can't take job ``a:b``'s runs.
+        # The range is Hermes' own (``cron_request_range``), so its partial index answers it; the execution id
+        # after the job's holds no ``:``, so job ``a`` can't take job ``a:b``'s runs. An admitted session the
+        # scheduler never ended had no agent run (a gate or a blocked setup returned first): the runtime made
+        # it before the run, and ends every run's before its output is saved, so it is no run's chat.
         admitted = conn.execute(
             "SELECT DISTINCT s.id, s.started_at, s.ended_at, s.end_reason FROM session_admissions a"
             " JOIN sessions s ON s.id = a.target_session_id"
-            f" WHERE a.principal_id = '{CRON_PRINCIPAL}' AND substr(a.request_id, 1, ?) = ?"
-            " AND length(a.request_id) > ? AND instr(substr(a.request_id, ? + 1), ':') = 0",
-            (len(request), request, len(request), len(request)),
+            f" WHERE a.principal_id = '{CRON_PRINCIPAL}' AND a.request_id >= ? AND a.request_id < ?"
+            " AND length(a.request_id) > ? AND instr(substr(a.request_id, ? + 1), ':') = 0"
+            " AND s.ended_at IS NOT NULL",
+            (request, request[:-1] + chr(ord(request[-1]) + 1), len(request), len(request)),
         ).fetchall()
         found += [(float(started), None if ended is None else float(ended), sid, reason or "")
                   for sid, started, ended, reason in admitted if started is not None]

@@ -562,6 +562,19 @@ def test_a_run_of_the_unified_runtime_names_its_local_session(tmp_path):
     assert [r["session"] for r in runs] == [mine]
 
 
+def test_a_unified_run_stopped_before_its_agent_started_has_no_session_even_when_fresh(tmp_path):
+    home = tmp_path / "home"
+    write_run(home, "j1", "2026-10-26_09-01-03", agent_run(response="setup blocked"))
+    # The runtime made the session before the run; the gate returned first, so nothing ever ended it.
+    empty = "local-" + "d" * 64
+    cron_sessions(home, (empty, at("2026-10-26 09:01:00"), None, None))
+    cron_admissions(home, ("cron:j1:0c7e11", empty))
+    saved = at("2026-10-26 09:01:03").timestamp()
+    # Just saved, as when the push goes out, and long after, as the Inbox reads it: the same answer.
+    for now in (saved + 5, saved + 11 * 60):
+        assert cron.run_sessions(home, "j1", ["2026-10-26_09-01-03"], now=now) == {}
+
+
 def test_a_run_whose_gate_kept_the_agent_asleep_has_no_session(tmp_path):
     home = tmp_path / "home"
     write_run(home, "gate", "2026-10-23_23-00-32", agent_run(response="woke"))
