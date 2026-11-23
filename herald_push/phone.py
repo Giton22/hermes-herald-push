@@ -66,9 +66,10 @@ SCREEN_TIMEOUT = 300
 MAX_SCREEN_MESSAGES = a2ui.MAX_MESSAGES
 SHOW_UI_TOOL = "phone_show_ui"
 
-# The generated per-property page, as this process sees it: the agent reads it with its own file tool when a screen
-# comes back refused and the one-line list is not enough.
+# The generated pages, as this process sees them: the agent reads them with its own file tool when the one-line list
+# in the description is not enough.
 SCREEN_REFERENCE = Path(__file__).with_name("a2ui_data") / "screen_reference.md"
+SCREEN_EXPRESS = Path(__file__).with_name("a2ui_data") / "express_skill.md"
 
 _SCREEN = (
     "Use this, not a list in text or an HTML page, when you ask the user to pick between options, confirm, or "
@@ -102,7 +103,10 @@ _SCREEN = (
     "new request from the user gets a new screen with a new surfaceId: an update changes the old card where it "
     "is, higher up in the chat, not under your new reply. "
     "A screen the catalog can't draw comes back as an error naming what to fix; the full per-property reference "
-    f"is at {SCREEN_REFERENCE}."
+    f"is at {SCREEN_REFERENCE}. "
+    "Faster, and preferred: send express instead — one A2UI Express block, '<a2ui>root = Column([...])</a2ui>' — "
+    f"plus surface, the id you make up; the gateway compiles it to the messages above for about half the tokens "
+    f"(grammar and every signature: {SCREEN_EXPRESS}). messages is for JSON you already have."
 )
 
 # The agent rings the user's own phone. It never takes a number: the phone it rings is the user's own Herald.
@@ -274,10 +278,18 @@ TOOLS: Dict[str, tuple] = {
         SHOW_UI_TOOL,
         _SCREEN,
         {
+            "express": {"type": "string", "maxLength": 20000,
+                        "description": "The screen as one A2UI Express block inside <a2ui>…</a2ui>. Give surface "
+                                       "with it. Preferred over messages."},
+            "surface": {"type": "string", "maxLength": 64,
+                        "description": "The id you make up for this screen, new for each screen; needed with "
+                                       "express, and it is the surfaceId an update addresses later."},
             "messages": {"type": "array", "minItems": 1, "maxItems": MAX_SCREEN_MESSAGES,
-                         "items": {"type": "object"}, "description": "A2UI messages, in the order they apply."},
+                         "items": {"type": "object"},
+                         "description": "A2UI messages, in the order they apply. For JSON you already have; "
+                                        "express is shorter to write."},
             "wait": {"type": "boolean", "description": "Wait for a tap (default true); false only shows it."},
-        }, ["messages"]), SCREEN_TIMEOUT, "🧩"),
+        }), SCREEN_TIMEOUT, "🧩"),
 }
 
 
@@ -315,9 +327,26 @@ def call_args(args: dict) -> Optional[dict]:
     return out
 
 
+def _screen_args(args: dict) -> tuple:
+    """The call with its messages: the ones given, or the ones an A2UI Express block compiles to, and why not."""
+    express = args.get("express")
+    if not isinstance(express, str) or not express.strip():
+        if not args.get("messages"):
+            return args, "Give express with surface, or messages."
+        return args, None
+    surface = args.get("surface")
+    if not isinstance(surface, str) or not surface.strip():
+        return args, "express needs surface: the id you make up for this screen, new for each screen."
+    try:
+        messages = a2ui.compile_express(express, surface.strip())
+    except a2ui.ScreenSyntaxError as error:
+        return args, f"The A2UI Express block didn't compile: {error}"
+    # The phone draws messages; the block it came from is not sent on.
+    return {"messages": messages, "wait": args.get("wait", True)}, None
+
+
 class Phones:
     """Which phones offer which tools, and the requests waiting for them, in ``<data>/phone/``."""
-
     def __init__(self, store: Store, wake: Optional[Callable[[str, dict], None]] = None,
                  clock: Callable[[], float] = time.time):
         self.store = store
@@ -494,8 +523,11 @@ class Phones:
         """Runs [tool] on a phone and waits for its answer: the tool result the agent reads, as JSON. [sid] is
         the chat connection whose turn calls it, which picks the phone (see [route])."""
         if tool == SHOW_UI_TOOL and isinstance(args, dict):
-            # Checked here, against the catalog the app draws with, so a screen the phone would refuse comes back
-            # at once as words the agent can fix instead of an error after the wait.
+            # An Express block becomes messages here; then the screen is checked against the catalog the app draws
+            # with, so one it would refuse comes back at once as words the agent can fix instead of after the wait.
+            args, refusal = _screen_args(args)
+            if refusal:
+                return _error(refusal)
             problems = a2ui.check(args.get("messages"))
             if problems:
                 return _error("The screen wasn't shown. " + " ".join(problems) + " Fix these and call again.")

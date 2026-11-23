@@ -508,7 +508,9 @@ def test_every_schema_is_a_closed_object():
 def test_a_screen_takes_a2ui_messages_and_waits_for_a_tap():
     schema, timeout, _ = phone.TOOLS["phone_show_ui"]
     params = schema["parameters"]
-    assert set(params["properties"]) == {"messages", "wait"} and params["required"] == ["messages"]
+    assert set(params["properties"]) == {"express", "surface", "messages", "wait"}
+    # Either form: an Express block with a surface, or the messages themselves — checked in the handler.
+    assert "required" not in params
     assert params["properties"]["messages"]["maxItems"] == phone.MAX_SCREEN_MESSAGES
     assert timeout == phone.SCREEN_TIMEOUT
     # What the agent is taught is what Kyllene's catalog draws.

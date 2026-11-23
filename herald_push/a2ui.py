@@ -102,6 +102,56 @@ def component_names() -> List[str]:
     return list(catalog()["components"])
 
 
+class ScreenSyntaxError(ValueError):
+    """An A2UI Express block that doesn't compile, in words the agent can fix."""
+
+
+@lru_cache(maxsize=1)
+def _catalog_object():
+    """The SDK's model of the vendored catalog. Imported here so the plugin still loads without the SDK."""
+    from a2ui.core.catalog import Catalog
+
+    return Catalog.from_json(catalog())
+
+
+def compile_express(text: str, surface_id: str) -> List[dict]:
+    """The wire messages an A2UI Express block compiles to, validated against the catalog as it compiles.
+
+    The app never sees Express: this runs on the gateway, so a screen written in the compact DSL arrives as the
+    same ``createSurface`` / ``updateComponents`` JSON as one written out by hand — for about half the tokens.
+    """
+    try:
+        from a2ui.inference_formats.express import ExpressFormatFactory
+        from a2ui.processor.processor import A2uiRequestProcessor
+    except ImportError as error:
+        raise ScreenSyntaxError(
+            "A2UI Express is not available on this gateway (the a2ui-agent-sdk package is missing); "
+            "send messages instead."
+        ) from error
+
+    try:
+        processor = A2uiRequestProcessor(
+            [_catalog_object()], format_factory=ExpressFormatFactory(surface_id=surface_id)
+        )
+        parts = processor.parse_response(text)
+    except Exception as error:  # the SDK's own error types all subclass A2uiError, but a bad block can raise anything
+        raise ScreenSyntaxError(_first_line(error)) from error
+    messages = [
+        message.model_dump(by_alias=True, exclude_none=True)
+        for part in parts
+        for message in (getattr(part, "a2ui", None) or [])
+    ]
+    if not messages:
+        raise ScreenSyntaxError("the block compiled to no messages; assign the screen to 'root' inside <a2ui>…</a2ui>.")
+    return messages
+
+
+def _first_line(error: Exception) -> str:
+    """The SDK explains a rejected block over several lines; the agent needs the first one."""
+    text = " ".join(str(error).split())
+    return text[:300] if text else type(error).__name__
+
+
 def _kind_of(message: Any) -> Optional[str]:
     if not isinstance(message, dict):
         return None

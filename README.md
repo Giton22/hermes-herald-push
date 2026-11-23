@@ -105,8 +105,11 @@ Agent tools that run on the phone, in the `herald_phone` toolset: `phone_battery
   Basic Catalog before it leaves the gateway (0.7.3), so a component the catalog doesn't know, a missing property or
   a component nothing points at comes back at once, in words, instead of as a broken card after the wait. The list of
   components it is given, and a per-property reference beside it, are generated from the catalog (0.7.4), so a
-  component the app adds arrives without anyone rewriting the prompt. The screen is drawn from the call's own
-  arguments, so it stays in the chat's history.
+  component the app adds arrives without anyone rewriting the prompt. A screen can also be written as one A2UI
+  Express block (`express` + `surface`, 0.7.5): the gateway compiles it with the A2UI agent SDK — a declared Python
+  dependency, imported lazily — and the app still receives plain messages, for about half the tokens. The grammar
+  and every signature are generated into `a2ui_data/express_skill.md` beside the per-property reference. The screen
+  is drawn from the call's own arguments, so it stays in the chat's history.
 
 ## Tests
 

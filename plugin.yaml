@@ -1,6 +1,6 @@
 name: herald-push
 label: Kyllene push
-version: 0.7.4
+version: 0.7.5
 manifest_version: 2
 requires_hermes: ">=0.21.5"
 description: >
@@ -16,6 +16,10 @@ description: >
 author: Giton22
 homepage: https://github.com/Giton22/hermes-herald-push
 license: MIT
+python_dependencies:
+  # Compiles an A2UI Express block into the messages the phone draws. Imported lazily: without it the plugin still
+  # serves hand-written messages, and `express` answers with what to do instead.
+  - "a2ui-agent-sdk>=0.12,<0.13"
 provides_tools:
   - phone_battery
   - phone_network

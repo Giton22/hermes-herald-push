@@ -119,6 +119,19 @@ def reference() -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def express_skill() -> str:
+    """The SDK's generated skill for this catalog: the Express grammar, then every component and function signature.
+
+    Generated at build time, not run time: the plugin compiles Express with the SDK, but what the model reads is a
+    file, so a gateway without the SDK still serves the same screens.
+    """
+    from a2ui.inference_formats.express import ExpressFormatFactory
+    from a2ui.skill import SkillGenerator
+
+    skill = SkillGenerator(ExpressFormatFactory().create_format([a2ui._catalog_object()])).generate_skill(name="a2ui")
+    return skill.content
+
+
 def main() -> None:
     """Writes the two artifacts: the line the tool description carries, and the page the agent can read."""
     module = a2ui._DATA.parent / "screen_catalog.py"
@@ -132,7 +145,9 @@ def main() -> None:
     )
     page = a2ui._DATA / "screen_reference.md"
     page.write_text(reference(), encoding="utf-8")
-    print(f"wrote {module} and {page}")
+    skill = a2ui._DATA / "express_skill.md"
+    skill.write_text(express_skill(), encoding="utf-8")
+    print(f"wrote {module}, {page} and {skill}")
 
 
 if __name__ == "__main__":
