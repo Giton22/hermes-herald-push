@@ -15,6 +15,13 @@ PHONE = "0b6f2c1e-1111-4222-8333-944445555666"
 OTHER = "99999999-aaaa-bbbb-cccc-dddddddddddd"
 KEY = "a" * 64
 OTHER_KEY = "b" * 64
+# A screen the Basic Catalog draws, for the tests that only care that the phone gets called.
+SCREEN = [
+    {"version": "v0.9", "createSurface": {"surfaceId": "pick",
+                                          "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"}},
+    {"version": "v0.9", "updateComponents": {"surfaceId": "pick",
+                                             "components": [{"id": "root", "component": "Text", "text": "Pick one"}]}},
+]
 
 
 def answer_when_asked(phones, device_id, result=None, error=None, wait=5.0):
@@ -536,7 +543,7 @@ def test_a_screen_only_shown_waits_no_longer_than_a_read(tmp_path):
     for wait in (False, True):
         thread = threading.Thread(target=run, daemon=True)
         thread.start()
-        assert json.loads(phones.call("phone_show_ui", {"messages": [], "wait": wait})) == {"shown": True}
+        assert json.loads(phones.call("phone_show_ui", {"messages": SCREEN, "wait": wait})) == {"shown": True}
         thread.join()
     # Expiry is kept in whole seconds.
     assert phone.READ_TIMEOUT - 2 <= waits[0] <= phone.READ_TIMEOUT

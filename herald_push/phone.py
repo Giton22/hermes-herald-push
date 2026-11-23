@@ -29,6 +29,7 @@ import uuid
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+from . import a2ui
 from .store import DEVICE_ID_RE, Store, _write_private
 
 log = logging.getLogger(__name__)
@@ -62,7 +63,7 @@ CONFIRM_TIMEOUT = 120
 CALL_TIMEOUT = 75
 # A screen in the chat waits for the user to look and tap.
 SCREEN_TIMEOUT = 300
-MAX_SCREEN_MESSAGES = 100
+MAX_SCREEN_MESSAGES = a2ui.MAX_MESSAGES
 SHOW_UI_TOOL = "phone_show_ui"
 
 _SCREEN = (
@@ -489,6 +490,12 @@ class Phones:
     def call(self, tool: str, args: dict, session_id: str = "", sid: str = "") -> str:
         """Runs [tool] on a phone and waits for its answer: the tool result the agent reads, as JSON. [sid] is
         the chat connection whose turn calls it, which picks the phone (see [route])."""
+        if tool == SHOW_UI_TOOL and isinstance(args, dict):
+            # Checked here, against the catalog the app draws with, so a screen the phone would refuse comes back
+            # at once as words the agent can fix instead of an error after the wait.
+            problems = a2ui.check(args.get("messages"))
+            if problems:
+                return _error("The screen wasn't shown. " + " ".join(problems) + " Fix these and call again.")
         device_id, refusal = self.route(tool, sid)
         if device_id is None:
             return _error(refusal or "No phone offers this tool any more.")

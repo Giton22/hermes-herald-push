@@ -101,8 +101,10 @@ Agent tools that run on the phone, in the `herald_phone` toolset: `phone_battery
 - **A screen in the chat (experiment).** `phone_show_ui(messages, wait?)` takes [A2UI](https://a2ui.org) v0.9
   messages, and Kyllene on Android draws them under the reply with the A2UI Basic Catalog. With `wait` (the
   default) the tool waits up to 5 minutes and returns the button the user tapped, its context and the form's
-  values; messages that aren't A2UI come back as an error the agent can fix. The screen is drawn from the call's
-  own arguments, so it stays in the chat's history.
+  values; messages that aren't A2UI come back as an error the agent can fix. Every screen is checked against the
+  Basic Catalog before it leaves the gateway (0.7.3), so a component the catalog doesn't know, a missing property or
+  a component nothing points at comes back at once, in words, instead of as a broken card after the wait. The screen
+  is drawn from the call's own arguments, so it stays in the chat's history.
 
 ## Tests
 
