@@ -184,6 +184,15 @@ def test_the_description_stays_small_enough_to_ship():
     assert len(phone._SCREEN) < 4200
 
 
+def test_the_description_points_at_a_reference_page_that_exists():
+    """A pointer the agent can act on: an absolute path to the generated page, not a name it has to hunt for."""
+    from herald_push import phone
+
+    assert phone.SCREEN_REFERENCE.is_absolute()
+    assert phone.SCREEN_REFERENCE.is_file()
+    assert str(phone.SCREEN_REFERENCE) in phone._SCREEN
+
+
 def test_a_screen_the_catalog_doesnt_know_never_reaches_the_phone(tmp_path):
     phones = Phones(Store(tmp_path))
     phones.report(PHONE, KEY, "Pixel", ["phone_show_ui"])

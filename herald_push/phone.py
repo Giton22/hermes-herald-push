@@ -66,6 +66,10 @@ SCREEN_TIMEOUT = 300
 MAX_SCREEN_MESSAGES = a2ui.MAX_MESSAGES
 SHOW_UI_TOOL = "phone_show_ui"
 
+# The generated per-property page, as this process sees it: the agent reads it with its own file tool when a screen
+# comes back refused and the one-line list is not enough.
+SCREEN_REFERENCE = Path(__file__).with_name("a2ui_data") / "screen_reference.md"
+
 _SCREEN = (
     "Use this, not a list in text or an HTML page, when you ask the user to pick between options, confirm, or "
     "fill in a few values. "
@@ -98,7 +102,7 @@ _SCREEN = (
     "new request from the user gets a new screen with a new surfaceId: an update changes the old card where it "
     "is, higher up in the chat, not under your new reply. "
     "A screen the catalog can't draw comes back as an error naming what to fix; the full per-property reference "
-    "is in the plugin's a2ui_data/screen_reference.md."
+    f"is at {SCREEN_REFERENCE}."
 )
 
 # The agent rings the user's own phone. It never takes a number: the phone it rings is the user's own Herald.
