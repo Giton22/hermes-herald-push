@@ -6,6 +6,7 @@ can act on, and nothing reaches a phone in between.
 """
 
 import json
+import re
 
 from herald_push import a2ui
 from herald_push.phone import Phones
@@ -147,6 +148,40 @@ def test_the_tool_schema_takes_its_limit_from_the_check():
     from herald_push import phone
 
     assert phone.MAX_SCREEN_MESSAGES == a2ui.MAX_MESSAGES
+
+
+def test_the_description_names_exactly_the_catalog_components():
+    """The list the model reads is the catalog's, not a hand-kept copy that drifts."""
+    from herald_push import phone, screen_catalog
+
+    # The generated line is embedded whole — no hand-edited copy of it in the prose.
+    assert screen_catalog.COMPONENTS in phone._SCREEN
+    for name in a2ui.component_names():
+        assert name in phone._SCREEN
+
+
+def test_the_screen_text_is_generated_from_the_catalog():
+    """Re-vendoring the catalog without rebuilding fails here, not silently in a phone call."""
+    from herald_push import screen_catalog, screen_catalog_build
+
+    assert screen_catalog.COMPONENTS == screen_catalog_build.components_line()
+    page = (a2ui._DATA / "screen_reference.md").read_text(encoding="utf-8")
+    assert page == screen_catalog_build.reference()
+
+
+def test_the_reference_page_covers_every_component():
+    page = (a2ui._DATA / "screen_reference.md").read_text(encoding="utf-8")
+    for name in a2ui.component_names():
+        assert f"## {name}" in page
+    # Every property of one component, with the catalog's own words.
+    assert "**variant**" in page and "A hint for the base text style." in page
+
+
+def test_the_description_stays_small_enough_to_ship():
+    """It rides on every request while a phone offers the tool; growth has to be a decision."""
+    from herald_push import phone
+
+    assert len(phone._SCREEN) < 4200
 
 
 def test_a_screen_the_catalog_doesnt_know_never_reaches_the_phone(tmp_path):

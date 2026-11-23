@@ -29,7 +29,7 @@ import uuid
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from . import a2ui
+from . import a2ui, screen_catalog
 from .store import DEVICE_ID_RE, Store, _write_private
 
 log = logging.getLogger(__name__)
@@ -83,23 +83,22 @@ _SCREEN = (
     '{"version":"v0.9","updateComponents":{"surfaceId":"SURFACE","components":[...]}} with one component whose id '
     'is "root"; optionally {"version":"v0.9","updateDataModel":{"surfaceId":"SURFACE","path":"/","value":{...}}} '
     "for starting values. Components are a flat list, each {id, component, ...props}, children named by id: "
-    "Column and Row {children:[ids], justify, align}, List {children, direction: vertical or horizontal}, Card "
-    "{child}, Divider, Modal {trigger: a Button's id, content}, Tabs {tabs:[{title, child}]}, "
-    "Text {text, variant: h1-h5, body or caption}, Icon {name}, Image {url, fit, variant: icon, avatar, "
-    "smallFeature, mediumFeature, largeFeature or header}, Video {url}, AudioPlayer {url, description}, "
-    "Button {child: a Text's id, variant: default, primary (the main action) or borderless, action: "
-    '{"event":{"name":"...","context":{...}}} to answer, or {"functionCall":{"call":"openUrl","args":{"url":'
-    '"https://..."}}} to open a link}, TextField {label, value, variant: shortText, longText, number or obscured}, '
-    "CheckBox {label, value}, ChoicePicker {label, options: [{label, value}], value: a list, variant: "
-    "mutuallyExclusive or multipleSelection}, Slider {label, min, max, value}, DateTimeInput {label, value, "
-    'enableDate, enableTime}. Bind a form field to the data with value: {"path":"/name"}. Fields and buttons take '
-    'checks: [{"call":"required","args":{"value":{"path":"/name"}},"message":"..."}] (also email, regex, length, '
-    "numeric); a button with a failing check can't be tapped. Pictures and media load from http(s) URLs only. "
+    + screen_catalog.COMPONENTS
+    + ". A Button's child is a Text (an Icon only if an icon-only button is asked for). A Button answers with "
+    'action: {"event":{"name":"...","context":{...}}}, or opens a link with '
+    '{"functionCall":{"call":"openUrl","args":{"url":"https://..."}}}. '
+    'Bind a form field to the data with value: {"path":"/name"}. Fields and buttons take '
+    'checks: [{"condition":{"call":"required","args":{"value":{"path":"/name"}}},"message":"..."}] '
+    '(functions: required, email, regex, length, numeric; a condition may also be a {"path":...}); '
+    "a button with a failing check can't be tapped. "
+    "Pictures and media load from http(s) URLs only. "
     "Within one task, to change the screen you just showed (progress in this turn, or the next step after the user "
     "tapped it), call again with only updateComponents, updateDataModel or deleteSurface for its surfaceId, no "
     "createSurface: it changes in place, and what the user typed stays unless your update replaces that data. A "
     "new request from the user gets a new screen with a new surfaceId: an update changes the old card where it "
-    "is, higher up in the chat, not under your new reply."
+    "is, higher up in the chat, not under your new reply. "
+    "A screen the catalog can't draw comes back as an error naming what to fix; the full per-property reference "
+    "is in the plugin's a2ui_data/screen_reference.md."
 )
 
 # The agent rings the user's own phone. It never takes a number: the phone it rings is the user's own Herald.

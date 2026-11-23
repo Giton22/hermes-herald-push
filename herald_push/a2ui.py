@@ -43,22 +43,22 @@ _CHILD_KEYS = frozenset({"child", "children", "trigger", "content", "componentId
 
 
 @lru_cache(maxsize=1)
-def _catalog() -> dict:
+def catalog() -> dict:
     return json.loads((_DATA / "catalog.json").read_text(encoding="utf-8"))
 
 
 @lru_cache(maxsize=1)
-def _common_types() -> dict:
+def common_types() -> dict:
     return json.loads((_DATA / "common_types.json").read_text(encoding="utf-8"))
 
 
 @lru_cache(maxsize=1)
 def _registry() -> Registry:
-    catalog = _catalog()
+    document = catalog()
     documents = {
-        CATALOG_ID: catalog,
-        CATALOG_SIBLING_ID: catalog,
-        COMMON_TYPES_ID: _common_types(),
+        CATALOG_ID: document,
+        CATALOG_SIBLING_ID: document,
+        COMMON_TYPES_ID: common_types(),
     }
     return Registry().with_resources(
         [(uri, Resource.from_contents(doc, default_specification=DRAFT202012)) for uri, doc in documents.items()]
@@ -74,8 +74,8 @@ def _validator(name: str) -> Draft202012Validator:
     annotations, so it reports every valid property as unexpected. Unknown properties are checked instead by
     :func:`_allowed`, which reads the same schemas.
     """
-    catalog = _catalog()
-    schema = {**catalog["components"][name], "$id": CATALOG_ID, "$defs": catalog.get("$defs", {})}
+    document = catalog()
+    schema = {**document["components"][name], "$id": CATALOG_ID, "$defs": document.get("$defs", {})}
     schema.pop("unevaluatedProperties", None)
     return Draft202012Validator(schema, registry=_registry())
 
@@ -83,15 +83,15 @@ def _validator(name: str) -> Draft202012Validator:
 @lru_cache(maxsize=None)
 def _allowed(name: str) -> frozenset:
     """Every property this component's schemas define, its ``allOf`` refs followed into the catalog and common types."""
-    catalog, common = _catalog(), _common_types()
+    document, common = catalog(), common_types()
     allowed = set()
-    for branch in catalog["components"][name].get("allOf", [catalog["components"][name]]):
+    for branch in document["components"][name].get("allOf", [document["components"][name]]):
         ref = branch.get("$ref")
         if not ref:
             allowed.update(branch.get("properties", {}))
             continue
-        document, _, pointer = ref.partition("#")
-        node = common if document == COMMON_TYPES_ID else catalog
+        uri, _, pointer = ref.partition("#")
+        node = common if uri == COMMON_TYPES_ID else document
         for part in filter(None, pointer.split("/")):
             node = node[part]
         allowed.update(node.get("properties", {}))
@@ -99,7 +99,7 @@ def _allowed(name: str) -> frozenset:
 
 
 def component_names() -> List[str]:
-    return list(_catalog()["components"])
+    return list(catalog()["components"])
 
 
 def _kind_of(message: Any) -> Optional[str]:
@@ -203,7 +203,7 @@ def check(messages: Any) -> List[str]:
                 if not isinstance(component_id, str) or not component_id:
                     add(f"messages[{index}].updateComponents: a component has no id.")
                     continue
-                if not isinstance(name, str) or name not in _catalog()["components"]:
+                if not isinstance(name, str) or name not in catalog()["components"]:
                     # The full list once: the model needs a valid name to swap in, not the same list four times.
                     names = f" Use one of: {', '.join(component_names())}." if not names_listed else ""
                     names_listed = True
