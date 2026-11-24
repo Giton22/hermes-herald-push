@@ -55,6 +55,37 @@ def test_a_screen_the_app_draws_passes():
     )) == []
 
 
+def test_a_component_the_renderer_cannot_reach_is_not_an_error():
+    # A2UI's own 31_incremental-dashboard sample leaves a panel unreachable and androidx.a2ui draws it fine.
+    assert a2ui.check(screen(
+        create(),
+        components(
+            {"id": "root", "component": "Column", "children": ["title"]},
+            text("title"),
+            text("leftover", "Nothing names this"),
+        ),
+    )) == []
+
+
+def test_a_screen_that_reaches_nothing_past_root_is_reported():
+    problems = a2ui.check(screen(
+        create(),
+        components(
+            {"id": "root", "component": "Column", "children": []},
+            text("leftover"),
+        ),
+    ))
+    assert len(problems) == 1 and "draws nothing" in problems[0]
+
+
+def test_a_child_that_was_never_defined_is_reported():
+    problems = a2ui.check(screen(
+        create(),
+        components({"id": "root", "component": "Column", "children": ["ghost"]}),
+    ))
+    assert len(problems) == 1 and "ghost" in problems[0] and "don't exist" in problems[0]
+
+
 def test_an_update_to_a_screen_already_on_the_phone_passes():
     # Only the messages this call sends are visible here; the rest of that screen is on the phone.
     assert a2ui.check(screen(components(text("title", "Changed")))) == []
@@ -95,13 +126,13 @@ def test_a_screen_without_a_root_says_so():
     assert problems and "root" in problems[0]
 
 
-def test_a_component_nothing_points_at_says_so():
-    problems = a2ui.check(screen(create(), components(
+def test_a_component_nothing_points_at_is_left_to_the_renderer():
+    # androidx.a2ui draws the surface and ignores what it cannot reach; that is not a fault to hand back.
+    assert a2ui.check(screen(create(), components(
         {"id": "root", "component": "Column", "children": ["title"]},
         text("title"),
         text("stray", "nobody names me"),
-    )))
-    assert problems and "stray" in problems[0]
+    ))) == []
 
 
 def test_another_catalog_is_refused():

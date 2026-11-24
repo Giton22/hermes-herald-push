@@ -7,8 +7,8 @@ module, so the check is offline, deterministic and matches the catalog the rende
 
 What the app already rejects on its own (a cycle, nesting past 24, more than 500 components, a message that isn't
 an object) is not repeated here. What it cannot know without the catalog is: an unknown component, a missing or
-mistyped property, a ``root`` that isn't there, a component nothing points at, and a ``catalogId`` that isn't this
-catalog.
+mistyped property, a ``root`` that isn't there or leads nowhere, a child id that was never defined, and a
+``catalogId`` that isn't this one.
 """
 
 import json
@@ -199,8 +199,11 @@ def check(messages: Any) -> List[str]:
     """Why Kyllene won't draw these messages, in words for the agent; empty when it will.
 
     Checks the envelope, then each component against the Basic Catalog, then that a fresh surface has a ``root``
-    and that every component on it is reachable. Reachability is skipped for a call that only updates a surface:
-    the rest of that screen is already on the phone, where this process cannot see it.
+    that leads somewhere. A component the renderer cannot reach from ``root`` is not an error: ``androidx.a2ui``
+    draws the surface and ignores it (A2UI's own ``31_incremental-dashboard`` sample does exactly this and draws
+    fine), so only a surface that reaches nothing past ``root`` — one that would come up empty — is reported.
+    Reachability is skipped for a call that only updates a surface: the rest of that screen is already on the
+    phone, where this process cannot see it.
     """
     if not isinstance(messages, list) or not messages:
         return ["messages must be a list of A2UI message objects, in the order they apply."]
@@ -209,6 +212,7 @@ def check(messages: Any) -> List[str]:
 
     problems: List[str] = []
     surfaces: Dict[str, Dict[str, dict]] = {}
+    declared: Dict[str, set] = {}
     fresh: set = set()
     names_listed = False
 
@@ -253,6 +257,7 @@ def check(messages: Any) -> List[str]:
                 if not isinstance(component_id, str) or not component_id:
                     add(f"messages[{index}].updateComponents: a component has no id.")
                     continue
+                declared.setdefault(surface_id, set()).add(component_id)
                 if not isinstance(name, str) or name not in catalog()["components"]:
                     # The full list once: the model needs a valid name to swap in, not the same list four times.
                     names = f" Use one of: {', '.join(component_names())}." if not names_listed else ""
@@ -282,16 +287,22 @@ def check(messages: Any) -> List[str]:
         if "root" not in known:
             add(f"surface {surface_id!r} has no component with id 'root'; every screen starts at 'root'.")
             continue
-        reached, queue = {"root"}, ["root"]
+        reached, queue, dangling = {"root"}, ["root"], []
+        named = declared.get(surface_id) or set(known)
         while queue:
             for child in _child_ids(known[queue.pop()]):
-                if child in known and child not in reached:
+                if child not in named:
+                    if child not in dangling:
+                        dangling.append(child)
+                elif child in known and child not in reached:
                     reached.add(child)
                     queue.append(child)
-        orphans = [name for name in known if name not in reached]
-        if orphans:
-            add(f"surface {surface_id!r} has components nothing reaches from 'root': "
-                f"{', '.join(orphans[:6])}{' …' if len(orphans) > 6 else ''}. "
-                "Name them in a parent's children, or drop them.")
+        if dangling:
+            add(f"surface {surface_id!r} names components that don't exist: "
+                f"{', '.join(dangling[:6])}{' …' if len(dangling) > 6 else ''}. "
+                "Define them, or point at ids that are there.")
+        if reached == {"root"} and len(known) > 1:
+            add(f"surface {surface_id!r} draws nothing: no component is reachable from 'root'. "
+                "Name children in 'root'.")
 
     return problems
