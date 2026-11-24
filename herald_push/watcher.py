@@ -109,8 +109,21 @@ def bot_chat_tip(home: Path) -> Optional[str]:
     if not db_path.is_file():
         return None
     try:
+        from persistence_assembly import open_persistence_reader
+    except ModuleNotFoundError as exc:
+        if exc.name != "persistence_assembly":
+            raise
+    else:
+        with open_persistence_reader(db_path) as db:
+            session_id = db.sessions.resolve_by_title(BOT_CHAT_TITLE)
+            return db.lineage.tip(session_id) if session_id else None
+
+    # Older Hermes versions expose these operations on SessionDB instead.
+    try:
         from hermes_state import SessionDB
-    except ImportError:
+    except ModuleNotFoundError as exc:
+        if exc.name != "hermes_state":
+            raise
         return None
     db = SessionDB(db_path=db_path, read_only=True)
     try:
