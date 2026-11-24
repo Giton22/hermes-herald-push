@@ -15,6 +15,13 @@ PHONE = "0b6f2c1e-1111-4222-8333-944445555666"
 OTHER = "99999999-aaaa-bbbb-cccc-dddddddddddd"
 KEY = "a" * 64
 OTHER_KEY = "b" * 64
+# A screen the Basic Catalog draws, for the tests that only care that the phone gets called.
+SCREEN = [
+    {"version": "v0.9", "createSurface": {"surfaceId": "pick",
+                                          "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"}},
+    {"version": "v0.9", "updateComponents": {"surfaceId": "pick",
+                                             "components": [{"id": "root", "component": "Text", "text": "Pick one"}]}},
+]
 
 
 def answer_when_asked(phones, device_id, result=None, error=None, wait=5.0):
@@ -501,7 +508,9 @@ def test_every_schema_is_a_closed_object():
 def test_a_screen_takes_a2ui_messages_and_waits_for_a_tap():
     schema, timeout, _ = phone.TOOLS["phone_show_ui"]
     params = schema["parameters"]
-    assert set(params["properties"]) == {"messages", "wait"} and params["required"] == ["messages"]
+    assert set(params["properties"]) == {"express", "surface", "messages", "wait"}
+    # Either form: an Express block with a surface, or the messages themselves — checked in the handler.
+    assert "required" not in params
     assert params["properties"]["messages"]["maxItems"] == phone.MAX_SCREEN_MESSAGES
     assert timeout == phone.SCREEN_TIMEOUT
     # What the agent is taught is what Kyllene's catalog draws.
@@ -536,7 +545,7 @@ def test_a_screen_only_shown_waits_no_longer_than_a_read(tmp_path):
     for wait in (False, True):
         thread = threading.Thread(target=run, daemon=True)
         thread.start()
-        assert json.loads(phones.call("phone_show_ui", {"messages": [], "wait": wait})) == {"shown": True}
+        assert json.loads(phones.call("phone_show_ui", {"messages": SCREEN, "wait": wait})) == {"shown": True}
         thread.join()
     # Expiry is kept in whole seconds.
     assert phone.READ_TIMEOUT - 2 <= waits[0] <= phone.READ_TIMEOUT
